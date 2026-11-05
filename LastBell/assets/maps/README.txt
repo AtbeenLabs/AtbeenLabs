@@ -1,1 +1,1 @@
-نقشه‌های فصل‌ها را اینجا بگذار: season1, season2, season3, season4. پسوندهای مجاز: .glb, .gltf, .fbx, .obj. نام Mesh برخورد باید شامل collider, wall, obstacle یا solid باشد.
+نقشه‌ها: school.glb (فصل ۱)، map.glb (فصل ۲)، season3.glb (فصل ۳)، season4.glb (فصل ۴). فرمت‌های مجاز: .glb, .gltf, .fbx, .obj. نام Meshهای برخورد بهتر است شامل collider, wall, obstacle یا solid باشد.
