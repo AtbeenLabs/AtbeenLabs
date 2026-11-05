@@ -346,6 +346,8 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'https://unpkg.com/three@0.160.0/examples/jsm/libs/meshopt_decoder.module.js';
 import { FBXLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/FBXLoader.js';
 import { OBJLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/OBJLoader.js';
 
@@ -1125,7 +1127,12 @@ let fireHeld = false, videoRecorder = null, videoChunks = [], screenMediaRecorde
 let notifNoiseTimer=0, drinkTemplate=null, messageDingContext=null;let introTime=0,introStartCamera=null;
 let cameraSensitivity = 1, baseFov=76, lastKnownTarget = null, isRecording = false;
 try { unlockedLevel = Math.max(1, Math.min(40, Number(localStorage.getItem('lastBellUnlocked') || 1))); } catch(e) { unlockedLevel = 1; }
-const assetLoaders = { gltf:new GLTFLoader(), fbx:new FBXLoader(), obj:new OBJLoader() };
+const gltfLoader = new GLTFLoader();
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+gltfLoader.setDRACOLoader(dracoLoader);
+gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+const assetLoaders = { gltf:gltfLoader, fbx:new FBXLoader(), obj:new OBJLoader() };
 const weaponTemplates={};let seasonMapGroup=new THREE.Group();scene.add(seasonMapGroup);let loadedMapSeason=0;const seasonMapColliders=[];
 const CUSTOM_ASSETS = {
   player:['./assets/characters/player.glb','./assets/characters/player.gltf','./assets/characters/player.fbx','./assets/characters/player.obj'],
