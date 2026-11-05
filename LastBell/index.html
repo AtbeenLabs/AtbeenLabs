@@ -2112,6 +2112,20 @@ $('micBtn').addEventListener('click',toggleMicrophone);
 
 /* ---------- PeerJS و اتاق آنلاین ---------- */
 let peerLibraryPromise = null;
+let peerReconnectTimer=null,peerReconnectAttempts=0;
+function clearPeerReconnect(){if(peerReconnectTimer){clearTimeout(peerReconnectTimer);peerReconnectTimer=null;}}
+function schedulePeerReconnect(peerObj){
+  if(peerObj!==peer||peerObj.destroyed||!peerObj.disconnected||peerReconnectTimer)return;
+  const attempt=++peerReconnectAttempts;
+  const delay=Math.min(15000,1000*Math.pow(2,Math.min(attempt-1,4)));
+  status(`ارتباط با سرور هماهنگی قطع شده؛ تلاش خودکار شماره ${attempt} تا ${Math.ceil(delay/1000)} ثانیه دیگر…`,'err');
+  peerReconnectTimer=setTimeout(()=>{
+    peerReconnectTimer=null;
+    if(peerObj!==peer||peerObj.destroyed||!peerObj.disconnected)return;
+    try{peerObj.reconnect();}
+    catch(error){console.warn('[LastBell] PeerJS reconnect failed:',error);schedulePeerReconnect(peerObj);}
+  },delay);
+}
 function ensurePeerLibrary() {
   if (window.Peer) return Promise.resolve(window.Peer);
   if (peerLibraryPromise) return peerLibraryPromise;
@@ -2155,14 +2169,34 @@ function peerErrorText(err) {
   return messages[type] || `اتصال ناموفق (${type || 'خطای ناشناخته'}): ${err?.message || 'خطای شبکه'}`;
 }
 function setupPeer(peerObj) {
+  clearPeerReconnect();
+  peerReconnectAttempts=0;
+  peerObj.on('open',()=>{
+    if(peerObj!==peer)return;
+    const recovered=peerReconnectAttempts>0;
+    clearPeerReconnect();peerReconnectAttempts=0;
+    if(recovered)status(conn?.open?'اتصال سرور بازی برگشت؛ ارتباط با دوستت برقرار است.':'اتصال سرور بازی دوباره برقرار شد.','ok');
+  });
   peerObj.on('error',err=>{
+    // PeerJS emits "network" immediately before "disconnected".
+    // The actual reconnect is scheduled from the disconnected event.
+    if(err?.type==='network'){
+      status('ارتباط اینترنتی با سرور اتاق ناپایدار شد؛ در حال بازیابی…','err');
+      return;
+    }
     status(peerErrorText(err),'err');
-    $('hostBtn').disabled = false; $('joinBtn').disabled = false;
-    $('hostBtn').textContent = '🌐 ساخت اتاق آنلاین';
-    $('joinBtn').textContent = 'ورود';
+    if(!peerObj.destroyed&&!peerObj.disconnected){
+      $('hostBtn').disabled=false;$('joinBtn').disabled=false;
+      $('hostBtn').textContent='🌐 ساخت اتاق آنلاین';$('joinBtn').textContent='ورود';
+    }
   });
   peerObj.on('call',call=>acceptVoiceCall(call));
-  peerObj.on('disconnected',()=>status('ارتباط با سرور اتاق قطع شد؛ در حال تلاش برای اتصال مجدد...','err'));
+  peerObj.on('disconnected',()=>{
+    schedulePeerReconnect(peerObj);
+  });
+  peerObj.on('close',()=>{
+    if(peerObj===peer)clearPeerReconnect();
+  });
 }
 function revealRoomBox() {
   $('roomBox').classList.remove('hidden');
@@ -2301,9 +2335,15 @@ async function createHostRoom() {
 
     peer.on('connection',c=>setupConnection(c,true));
     peer.on('open',id=>{
-      opened = true; clearTimeout(openTimer);
-      $('roomCodeOut').value = id;
-      button.disabled = false; button.textContent = '🌐 اتاق ساخته شد';
+      if(opened){
+        // The same room ID is restored after a successful signaling reconnect.
+        $('roomCodeOut').value=id;
+        if(conn?.open)status('سرور هماهنگی برگشت؛ اتاق و ارتباط دوستت حفظ شده است.','ok');
+        return;
+      }
+      opened=true;clearTimeout(openTimer);
+      $('roomCodeOut').value=id;
+      button.disabled=false;button.textContent='🌐 اتاق ساخته شد';
       status(`اتاق «${roomName}» ساخته شد! این کد را برای دوستت بفرست. ظرفیت: ۲ نفر.`,'ok');
       $('roomCodeOut').focus(); $('roomCodeOut').select();
       requestAnimationFrame(()=>$('roomCodeOut').scrollIntoView({block:'center',behavior:'smooth'}));
@@ -2341,10 +2381,16 @@ async function joinRoom() {
       try { peer?.destroy(); } catch (e) {}
       peer = null; online = false;
     }, 18000);
+    let roomConnectStarted=false;
     peer.on('open',()=>{
-      const c = peer.connect(code,{reliable:true});
+      // PeerJS emits "open" again after reconnect(); never create duplicate
+      // room DataConnections when the signaling socket is restored.
+      if(roomConnectStarted)return;
+      roomConnectStarted=true;
+      const c=peer.connect(code,{reliable:true});
       setupConnection(c,false);
       c.on('open',()=>{connected=true;clearTimeout(joinTimer);button.disabled=false;button.textContent='ورود';});
+      c.on('error',err=>{console.warn('[LastBell] room data connection error:',err);});
     });
   } catch (err) {
     button.disabled = false; button.textContent = 'ورود'; online = false;
