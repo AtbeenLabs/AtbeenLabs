@@ -1182,7 +1182,10 @@ let elapsed = 0;
 let state = 'menu';
 let isHost = true;
 let online = false;
+const ROOM_SERVER_HTTP = 'https://lastbell-rooms.atbeen.workers.dev';
+const ROOM_SERVER_WS = 'wss://lastbell-rooms.atbeen.workers.dev';
 let peer = null, conn = null, localStream = null, mediaCall = null;
+let localVoicePeerId='',remoteVoicePeerId='';
 let voiceContext = null, voiceAnalyser = null, voiceBuffer = null, voiceMuted = false;
 let localVoice = 0, networkSendTimer = 0, snapshotTimer = 0;
 let matchStarted = false;
@@ -2076,7 +2079,12 @@ async function requestMicrophone() {
     voiceMuted=false;localStream.getAudioTracks().forEach(t=>t.enabled=true);
     $('voiceStatus').textContent='میکروفن روشن است · M برای خاموش/روشن';
     $('micBtn').textContent='🔇 خاموش کردن میکروفن (M)';
-    if(conn?.open&&peer?.id){if(mediaCall){try{mediaCall.close();}catch(e){}mediaCall=null;}startVoiceCall(conn.peer);}
+    startVoicePeer();
+    if(conn?.open&&peer?.id)sendNet({type:'voicePeer',id:peer.id});
+    if(conn?.open&&remoteVoicePeerId&&peer?.id){
+      if(mediaCall){try{mediaCall.close();}catch(e){}mediaCall=null;}
+      startVoiceCall(remoteVoicePeerId);
+    }
     return true;
   } catch(e) {
     $('voiceStatus').textContent='اجازه میکروفن داده نشد؛ بازی آنلاین بدون ویس هم کار می‌کنه';$('micBtn').textContent='🎙 تلاش دوباره برای میکروفن (M)';
@@ -2134,7 +2142,7 @@ function schedulePeerReconnect(peerObj){
   if(peerObj!==peer||peerObj.destroyed||!peerObj.disconnected||peerReconnectTimer)return;
   const attempt=++peerReconnectAttempts;
   const delay=Math.min(15000,1000*Math.pow(2,Math.min(attempt-1,4)));
-  status(`ارتباط با سرور هماهنگی قطع شده؛ تلاش خودکار شماره ${attempt} تا ${Math.ceil(delay/1000)} ثانیه دیگر…`,'err');
+  $('voiceStatus').textContent=`اتصال سرویس ویس قطع شده؛ تلاش مجدد ${attempt}…`;
   peerReconnectTimer=setTimeout(()=>{
     peerReconnectTimer=null;
     if(peerObj!==peer||peerObj.destroyed||!peerObj.disconnected)return;
@@ -2187,46 +2195,92 @@ function peerErrorText(err) {
 function setupPeer(peerObj) {
   clearPeerReconnect();
   peerReconnectAttempts=0;
-  peerObj.on('open',()=>{
+  peerObj.on('open',id=>{
     if(peerObj!==peer)return;
     const recovered=peerReconnectAttempts>0;
     clearPeerReconnect();peerReconnectAttempts=0;
-    if(recovered)status(conn?.open?'اتصال سرور بازی برگشت؛ ارتباط با دوستت برقرار است.':'اتصال سرور بازی دوباره برقرار شد.','ok');
+    localVoicePeerId=id||peerObj.id||'';
+    if(conn?.open&&localVoicePeerId)sendNet({type:'voicePeer',id:localVoicePeerId});
+    if(localStream&&remoteVoicePeerId)startVoiceCall(remoteVoicePeerId);
+    if(recovered)$('voiceStatus').textContent='سرویس ویس دوباره وصل شد.';
   });
   peerObj.on('error',err=>{
-    // PeerJS emits "network" immediately before "disconnected".
-    // The actual reconnect is scheduled from the disconnected event.
     if(err?.type==='network'){
-      status('ارتباط اینترنتی با سرور اتاق ناپایدار شد؛ در حال بازیابی…','err');
+      $('voiceStatus').textContent='اتصال سرویس ویس ناپایدار است؛ بازی آنلاین همچنان از سرور روم استفاده می‌کند.';
       return;
     }
-    status(peerErrorText(err),'err');
-    if(!peerObj.destroyed&&!peerObj.disconnected){
-      $('hostBtn').disabled=false;$('joinBtn').disabled=false;
-      $('hostBtn').textContent='🌐 ساخت اتاق آنلاین';$('joinBtn').textContent='ورود';
-    }
+    $('voiceStatus').textContent='ویس در دسترس نیست؛ بازی آنلاین بدون ویس ادامه دارد.';
+    console.warn('[LastBell] PeerJS voice error:',err);
   });
   peerObj.on('call',call=>acceptVoiceCall(call));
-  peerObj.on('disconnected',()=>{
-    schedulePeerReconnect(peerObj);
+  peerObj.on('disconnected',()=>schedulePeerReconnect(peerObj));
+  peerObj.on('close',()=>{if(peerObj===peer)clearPeerReconnect();});
+}
+function startVoicePeer() {
+  if(peer&&!peer.destroyed)return;
+  ensurePeerLibrary().then(PeerCtor=>{
+    if(peer&&!peer.destroyed)return;
+    peer=new PeerCtor(undefined,{debug:0});
+    setupPeer(peer);
+  }).catch(error=>{
+    console.warn('[LastBell] Optional voice service unavailable:',error);
+    $('voiceStatus').textContent='ویس در دسترس نیست؛ اتصال آنلاین بازی مستقل از ویس است.';
   });
-  peerObj.on('close',()=>{
-    if(peerObj===peer)clearPeerReconnect();
+}
+function resetVoicePeer() {
+  clearPeerReconnect();
+  if(mediaCall){try{mediaCall.close();}catch{}mediaCall=null;}
+  if(peer){try{peer.destroy();}catch{}}
+  peer=null;localVoicePeerId='';remoteVoicePeerId='';
+}
+function makeRoomSocketConnection(url) {
+  const socket=new WebSocket(url);
+  const handlers={open:[],data:[],close:[],error:[]};
+  const connection={
+    open:false,opened:false,peer:'',
+    on(type,callback){if(handlers[type])handlers[type].push(callback);return connection;},
+    send(packet){
+      if(socket.readyState!==WebSocket.OPEN)return false;
+      try{socket.send(JSON.stringify(packet));return true;}catch(error){console.warn('[LastBell] room send failed:',error);return false;}
+    },
+    close(){try{socket.close(1000,'client left room');}catch{}}
+  };
+  const emit=(type,value)=>{for(const callback of handlers[type]||[]){try{callback(value);}catch(error){console.error('[LastBell] room event callback failed:',error);}}};
+  socket.addEventListener('open',()=>{connection.open=true;connection.opened=true;emit('open');});
+  socket.addEventListener('message',event=>{
+    try{emit('data',JSON.parse(event.data));}
+    catch(error){console.warn('[LastBell] invalid room packet:',error);}
   });
+  socket.addEventListener('error',event=>emit('error',event));
+  socket.addEventListener('close',event=>{connection.open=false;emit('close',event);});
+  return connection;
 }
 function revealRoomBox() {
   $('roomBox').classList.remove('hidden');
   requestAnimationFrame(() => $('roomBox').scrollIntoView({block:'nearest',behavior:'smooth'}));
 }
-function setupConnection(c, incoming) {
+function setupConnection(c,incoming) {
   conn=c;
   c.on('open',()=>{
-    if(!incoming){c.send({type:'hello',name:player.name,color:player.color,character:player.character,password:$('joinPasswordInput').value.trim()});status('به اتاق وصل شدی؛ منتظر میزبان...','ok');}
-    else status('دوستت وصل شد!','ok');
+    if(!incoming){
+      c.send({
+        type:'hello',name:player.name,color:player.color,character:player.character,
+        password:$('joinPasswordInput').value.trim(),
+        voicePeerId:localVoicePeerId||peer?.id||''
+      });
+      status('به سرور روم وصل شدی؛ منتظر میزبان…','ok');
+    }else status('سرور روم آماده است؛ کد را برای دوستت بفرست.','ok');
   });
   c.on('data',handleNetworkMessage);
-  c.on('close',()=>{remotePlayer=null;if(remoteAvatar){scene.remove(remoteAvatar.root);remoteAvatar=null;}status('دوستت از اتاق خارج شد.','err');});
-  c.on('error',()=>status('خطای ارتباط بازیکن','err'));
+  c.on('close',()=>{
+    remotePlayer=null;
+    if(remoteAvatar){scene.remove(remoteAvatar.root);remoteAvatar=null;}
+    if(!c.opened)status(incoming?'اتصال میزبان به سرور روم قطع شد.':'روم پیدا نشد یا میزبان هنوز وصل نیست.','err');
+    else status('ارتباط با روم بسته شد.','err');
+  });
+  c.on('error',()=>{
+    status('اتصال به سرور آنلاین روم ناموفق بود؛ اینترنت را بررسی کن.','err');
+  });
 }
 function ensureRemote(data) {
   if(!remotePlayer){remotePlayer=newPlayer(data.id||'guest',data.name||'دوست',data.color||'#ff477e',data.character||'student');remoteAvatar=makeAvatar(remotePlayer.color,remotePlayer.character);scene.add(remoteAvatar.root);applyAvatarAsset(remoteAvatar,remotePlayer.character);}
@@ -2238,14 +2292,40 @@ function handleNetworkMessage(m) {
   if(!m||!m.type)return;
   if(m.type==='hello'&&isHost){
     if(roomVisibility==='private'&&(m.password||'')!==roomPassword){sendNet({type:'reject',reason:'رمز اتاق اشتباه است'});setTimeout(()=>{try{conn?.close();}catch(e){}},250);status('رمز اتاق اشتباه بود.','err');return;}
-    ensureRemote({id:'guest',name:m.name,color:m.color,character:m.character});lastKnownRemoteId=conn.peer;
-    sendNet({type:'welcome',roomName,gameMode,sandboxMode,campaignLevel,host:{id:'host',name:player.name,color:player.color,character:player.character}});
-    if(localStream)startVoiceCall(conn.peer);
+    ensureRemote({id:'guest',name:m.name,color:m.color,character:m.character});
+    remoteVoicePeerId=String(m.voicePeerId||'');
+    if(conn)conn.peer=remoteVoicePeerId;
+    sendNet({type:'welcome',roomName,gameMode,sandboxMode,campaignLevel,host:{id:'host',name:player.name,color:player.color,character:player.character,voicePeerId:localVoicePeerId||peer?.id||''}});
+    if(localStream&&remoteVoicePeerId)startVoiceCall(remoteVoicePeerId);
     $('startMatchBtn').classList.remove('hidden');$('startMatchBtn').disabled=false;
     status(`${remotePlayer.name} وارد اتاق شد؛ آماده شروعی؟`,'ok');return;
   }
   if(m.type==='reject'&&!isHost){status(m.reason||'ورود به اتاق رد شد','err');return;}
-  if(m.type==='welcome'&&!isHost){ensureRemote(m.host);roomName=m.roomName||'زنگ آخر';gameMode=m.gameMode||'sandbox';sandboxMode=!!m.sandboxMode;campaignLevel=m.campaignLevel||1;status(`به اتاق «${roomName}» وصل شدی؛ منتظر شروع میزبان باش.`,'ok');return;}
+  if(m.type==='welcome'&&!isHost){
+    ensureRemote(m.host);remoteVoicePeerId=String(m.host?.voicePeerId||'');
+    if(conn)conn.peer=remoteVoicePeerId;
+    roomName=m.roomName||'زنگ آخر';gameMode=m.gameMode||'sandbox';sandboxMode=!!m.sandboxMode;campaignLevel=m.campaignLevel||1;
+    if(localStream&&remoteVoicePeerId)startVoiceCall(remoteVoicePeerId);
+    status(`به اتاق «${roomName}» وصل شدی؛ منتظر شروع میزبان باش.`,'ok');return;
+  }
+  if(m.type==='voicePeer'){
+    remoteVoicePeerId=String(m.id||'');
+    if(conn)conn.peer=remoteVoicePeerId;
+    if(localStream&&remoteVoicePeerId)startVoiceCall(remoteVoicePeerId);
+    return;
+  }
+  if(m.type==='transport-peer-left'){
+    if(m.role==='guest'&&isHost){
+      remotePlayer=null;
+      if(remoteAvatar){scene.remove(remoteAvatar.root);remoteAvatar=null;}
+      $('startMatchBtn').classList.add('hidden');
+      status('دوستت از روم خارج شد؛ می‌تواند دوباره وارد شود.','err');
+    }else if(m.role==='host'&&!isHost){
+      status('میزبان از روم خارج شد.','err');
+      conn?.close();
+    }
+    return;
+  }
   if(m.type==='start'&&!isHost){campaignLevel=m.level||campaignLevel;gameMode=m.gameMode||gameMode;sandboxMode=!!m.sandboxMode;beginMatch(false);return;}
   if(m.type==='input'&&isHost&&remotePlayer){
     const wasHidden=!!remotePlayer.hidden;
@@ -2322,119 +2402,105 @@ function hostSnapshot(dt) {
   sendNet({type:'snapshot',elapsed,started:true,players:getPlayers().map(serialize),enemies:enemies.map(e=>({id:e.id,x:e.x,z:e.z,yaw:e.mesh.rotation.y,hp:e.hp,alive:e.alive})),pickups:pickups.map(p=>({id:p.id,available:p.available,respawnAt:p.respawnAt}))});
 }
 async function createHostRoom() {
-  const button = $('hostBtn');
-  if (button.disabled) return;
-  roomName = $('roomNameInput').value.trim() || 'زنگ آخر';
-  roomVisibility = $('roomVisibility').value;
-  roomPassword = roomVisibility === 'private' ? $('roomPasswordInput').value.trim() : '';
-  gameMode = $('roomGameMode').value;
-  sandboxMode = gameMode === 'sandbox';
-  campaignLevel = (Number($('roomMapSelect').value) - 1) * 10 + 1;
+  const button=$('hostBtn');
+  if(button.disabled)return;
+  roomName=$('roomNameInput').value.trim()||'زنگ آخر';
+  roomVisibility=$('roomVisibility').value;
+  roomPassword=roomVisibility==='private'?$('roomPasswordInput').value.trim():'';
+  gameMode=$('roomGameMode').value;
+  sandboxMode=gameMode==='sandbox';
+  campaignLevel=(Number($('roomMapSelect').value)-1)*10+1;
 
-  if (roomVisibility === 'private' && !roomPassword) {
-    revealRoomBox();
-    status('برای اتاق خصوصی یک رمز انتخاب کن؛ یا نوع اتاق را روی عمومی بگذار.','err');
-    $('roomPasswordInput').focus();
-    return;
+  if(roomVisibility==='private'&&!roomPassword){
+    revealRoomBox();status('برای اتاق خصوصی یک رمز انتخاب کن؛ یا نوع اتاق را روی عمومی بگذار.','err');$('roomPasswordInput').focus();return;
   }
-  if (location.protocol === 'file:') {
-    revealRoomBox();
-    status('برای ساخت کد آنلاین، فایل را روی سایت HTTPS مثل GitHub Pages یا Cloudflare Pages اجرا کن؛ اجرای مستقیم فایل از پوشه برای آنلاین مناسب نیست.','err');
-    return;
+  if(location.protocol==='file:'){
+    revealRoomBox();status('برای آنلاین، بازی را از آدرس HTTPS باز کن.','err');return;
   }
-  if (!navigator.onLine) {
-    revealRoomBox(); status('اینترنت وصل نیست؛ برای ساخت کد اتاق اینترنت لازم است.','err'); return;
-  }
+  if(!navigator.onLine){revealRoomBox();status('اینترنت وصل نیست؛ برای ساخت روم اینترنت لازم است.','err');return;}
 
-  button.disabled = true;
-  button.textContent = 'در حال ساخت اتاق...';
-  $('roomCodeOut').value = '';
-  $('startMatchBtn').classList.add('hidden');
-  $('startMatchBtn').disabled = true;
-  revealRoomBox();
-  status('در حال اتصال به سرور و گرفتن کد اتاق...','');
+  button.disabled=true;button.textContent='در حال ساخت روم اینترنتی…';
+  $('roomCodeOut').value='';$('startMatchBtn').classList.add('hidden');$('startMatchBtn').disabled=true;
+  revealRoomBox();status('در حال ساخت روم روی سرور…','');
 
-  try {
-    const PeerCtor = await ensurePeerLibrary();
-    if (peer) { try { peer.destroy(); } catch (e) {} }
-    peer = new PeerCtor(undefined, {debug: 0});
-    setupPeer(peer);
-    isHost = true; online = true; matchStarted = false;
-    player = newPlayer('host',myName(),myColor(),$('avatarType').value);
-    if (localAvatar?.root) localAvatar.root.removeFromParent();
-    localAvatar = makeAvatar(player.color,player.character); scene.add(localAvatar.root); applyAvatarAsset(localAvatar,player.character);
+  try{
+    const response=await fetch(ROOM_SERVER_HTTP+'/api/rooms',{method:'POST'});
+    if(!response.ok)throw new Error('سرور روم پاسخ '+response.status+' داد.');
+    const data=await response.json(),roomCode=String(data.roomCode||'').toUpperCase();
+    if(!/^[A-HJ-NP-Z2-9]{8}$/.test(roomCode))throw new Error('کد روم از سرور معتبر نیست.');
 
-    let opened = false;
-    const openTimer = setTimeout(() => {
-      if (opened) return;
-      button.disabled = false; button.textContent = '🌐 دوباره ساخت اتاق';
-      status('هنوز کدی از سرور نرسیده. اتصال اینترنت و دسترسی به PeerJS را بررسی کن و دوباره بزن.','err');
-      try { peer?.destroy(); } catch (e) {}
-      peer = null; online = false;
-    }, 18000);
+    if(conn){try{conn.close();}catch{}conn=null;}
+    resetVoicePeer();startVoicePeer();
+    isHost=true;online=true;matchStarted=false;remotePlayer=null;remoteAvatar?.root?.removeFromParent?.();remoteAvatar=null;
+    player=newPlayer('host',myName(),myColor(),$('avatarType').value);
+    if(localAvatar?.root)localAvatar.root.removeFromParent();
+    localAvatar=makeAvatar(player.color,player.character);scene.add(localAvatar.root);applyAvatarAsset(localAvatar,player.character);
 
-    peer.on('connection',c=>setupConnection(c,true));
-    peer.on('open',id=>{
-      if(opened){
-        // The same room ID is restored after a successful signaling reconnect.
-        $('roomCodeOut').value=id;
-        if(conn?.open)status('سرور هماهنگی برگشت؛ اتاق و ارتباط دوستت حفظ شده است.','ok');
-        return;
-      }
-      opened=true;clearTimeout(openTimer);
-      $('roomCodeOut').value=id;
-      button.disabled=false;button.textContent='🌐 اتاق ساخته شد';
-      status(`اتاق «${roomName}» ساخته شد! این کد را برای دوستت بفرست. ظرفیت: ۲ نفر.`,'ok');
-      $('roomCodeOut').focus(); $('roomCodeOut').select();
+    const c=makeRoomSocketConnection(ROOM_SERVER_WS+'/ws/'+roomCode+'?role=host');
+    setupConnection(c,true);
+    let opened=false;
+    const openTimer=setTimeout(()=>{
+      if(opened)return;
+      button.disabled=false;button.textContent='🌐 دوباره ساخت روم';
+      status('سرور روم در دسترس نیست؛ اتصال اینترنت یا Cloudflare را بررسی کن.','err');
+      try{c.close();}catch{}online=false;
+    },18000);
+    c.on('open',()=>{
+      if(opened)return;opened=true;clearTimeout(openTimer);
+      $('roomCodeOut').value=roomCode;button.disabled=false;button.textContent='🌐 اتاق ساخته شد';
+      status(`اتاق «${roomName}» روی سرور اینترنتی آماده شد؛ این کد را برای دوستت بفرست.`,'ok');
+      $('roomCodeOut').focus();$('roomCodeOut').select();
       requestAnimationFrame(()=>$('roomCodeOut').scrollIntoView({block:'center',behavior:'smooth'}));
     });
-  } catch (err) {
-    online = false;
-    button.disabled = false; button.textContent = '🌐 دوباره ساخت اتاق';
-    revealRoomBox(); status(err?.message || 'ساخت اتاق ناموفق بود؛ اتصال اینترنت را بررسی کن.','err');
+    c.on('close',()=>{
+      if(opened)return;clearTimeout(openTimer);
+      button.disabled=false;button.textContent='🌐 دوباره ساخت روم';online=false;
+    });
+  }catch(error){
+    button.disabled=false;button.textContent='🌐 ساخت اتاق آنلاین';online=false;
+    revealRoomBox();status(error?.message||'ساخت روم اینترنتی ناموفق بود.','err');
   }
 }
-async function joinRoom() {
-  const button = $('joinBtn');
-  if (button.disabled) return;
-  const code = $('roomCodeIn').value.trim();
-  if (!code) { status('اول کد اتاق را وارد کن.','err'); $('roomCodeIn').focus(); return; }
-  if (location.protocol === 'file:') { status('برای ورود آنلاین، بازی را از آدرس HTTPS باز کن.','err'); return; }
-  if (!navigator.onLine) { status('اینترنت وصل نیست؛ برای ورود به اتاق اینترنت لازم است.','err'); return; }
 
-  button.disabled = true; button.textContent = 'در حال اتصال...';
-  status('در حال اتصال به اتاق دوستت...','');
-  try {
-    const PeerCtor = await ensurePeerLibrary();
-    if (peer) { try { peer.destroy(); } catch (e) {} }
-    peer = new PeerCtor(undefined, {debug: 0});
-    setupPeer(peer);
-    player = newPlayer('guest',myName(),myColor(),$('avatarType').value);
-    if (localAvatar?.root) localAvatar.root.removeFromParent();
-    localAvatar = makeAvatar(player.color,player.character); scene.add(localAvatar.root); applyAvatarAsset(localAvatar,player.character);
-    isHost = false; online = true;
-    let connected = false;
-    const joinTimer = setTimeout(() => {
-      if (connected) return;
-      button.disabled = false; button.textContent = 'ورود';
-      status('اتصال کامل نشد؛ کد را بررسی کن یا از میزبان کد تازه بگیر.','err');
-      try { peer?.destroy(); } catch (e) {}
-      peer = null; online = false;
-    }, 18000);
-    let roomConnectStarted=false;
-    peer.on('open',()=>{
-      // PeerJS emits "open" again after reconnect(); never create duplicate
-      // room DataConnections when the signaling socket is restored.
-      if(roomConnectStarted)return;
-      roomConnectStarted=true;
-      const c=peer.connect(code,{reliable:true});
-      setupConnection(c,false);
-      c.on('open',()=>{connected=true;clearTimeout(joinTimer);button.disabled=false;button.textContent='ورود';});
-      c.on('error',err=>{console.warn('[LastBell] room data connection error:',err);});
+async function joinRoom() {
+  const button=$('joinBtn');
+  if(button.disabled)return;
+  const code=$('roomCodeIn').value.trim().toUpperCase();
+  if(!code){status('اول کد روم را وارد کن.','err');$('roomCodeIn').focus();return;}
+  if(!/^[A-HJ-NP-Z2-9]{8}$/.test(code)){status('کد روم باید ۸ حرف یا عدد باشد.','err');$('roomCodeIn').focus();return;}
+  if(location.protocol==='file:'){status('برای ورود آنلاین، بازی را از آدرس HTTPS باز کن.','err');return;}
+  if(!navigator.onLine){status('اینترنت وصل نیست؛ برای ورود به روم اینترنت لازم است.','err');return;}
+
+  button.disabled=true;button.textContent='در حال اتصال…';status('در حال اتصال به سرور اینترنتی روم…','');
+  try{
+    if(conn){try{conn.close();}catch{}conn=null;}
+    resetVoicePeer();startVoicePeer();
+    player=newPlayer('guest',myName(),myColor(),$('avatarType').value);
+    if(localAvatar?.root)localAvatar.root.removeFromParent();
+    localAvatar=makeAvatar(player.color,player.character);scene.add(localAvatar.root);applyAvatarAsset(localAvatar,player.character);
+    isHost=false;online=true;remotePlayer=null;remoteAvatar=null;
+
+    const c=makeRoomSocketConnection(ROOM_SERVER_WS+'/ws/'+code+'?role=guest');
+    setupConnection(c,false);
+    let connected=false;
+    const joinTimer=setTimeout(()=>{
+      if(connected)return;
+      button.disabled=false;button.textContent='ورود';online=false;
+      status('اتصال به روم برقرار نشد؛ کد را بررسی کن یا مطمئن شو میزبان هنوز داخل روم است.','err');
+      try{c.close();}catch{}
+    },18000);
+    c.on('open',()=>{
+      if(connected)return;connected=true;clearTimeout(joinTimer);
+      button.disabled=false;button.textContent='ورود';
+      status('به سرور روم وصل شدی؛ منتظر اطلاعات میزبان…','ok');
     });
-  } catch (err) {
-    button.disabled = false; button.textContent = 'ورود'; online = false;
-    status(err?.message || 'کتابخانه آنلاین بارگذاری نشد؛ اینترنت را بررسی کن.','err');
+    c.on('close',()=>{
+      if(connected)return;clearTimeout(joinTimer);
+      button.disabled=false;button.textContent='ورود';online=false;
+    });
+  }catch(error){
+    button.disabled=false;button.textContent='ورود';online=false;
+    status(error?.message||'اتصال به سرور آنلاین روم ناموفق بود.','err');
   }
 }
 async function loadWeaponTemplates(){
