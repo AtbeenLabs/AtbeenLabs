@@ -1273,6 +1273,11 @@ function updateAvatar(view,p,dt=1/60) {
     view.gun.userData.weapon=current;
     view.gun.userData.assetVersion=weaponAssetVersion;
   }
+  const kick=view.gun.userData.kick||0,reload=view.gun.userData.reload||0;
+  view.gun.position.set(.40,1.26,-.38+kick*.1+reload*.05);
+  view.gun.rotation.set(-kick*.11-reload*.2,0,reload*.55);
+  view.gun.userData.kick=Math.max(0,kick-dt*9);
+  view.gun.userData.reload=Math.max(0,reload-dt*1.8);
 }
 let localAvatar=makeAvatar(player.color,player.character);
 scene.add(localAvatar.root);applyAvatarAsset(localAvatar,player.character);
@@ -1303,8 +1308,12 @@ function updateFirstPersonGun(){
     firstPersonGun.clear();firstPersonGun.add(makeGunVisual(id,.9));
     firstPersonGun.userData.weapon=id;firstPersonGun.userData.assetVersion=weaponAssetVersion;
   }
-  firstPersonGun.position.set(aiming?.045:.34,aiming?-.22:-.28,aiming?-.62:-.72);
+  const kick=firstPersonGun.userData.kick||0,reload=firstPersonGun.userData.reload||0;
+  firstPersonGun.position.set(aiming?.045:.34,aiming?-.22:-.28,(aiming?-.62:-.72)+kick*.14+reload*.06);
+  firstPersonGun.rotation.set(-kick*.13-reload*.25,0,reload*.65);
   firstPersonGun.scale.setScalar(aiming?.9:1);
+  firstPersonGun.userData.kick=Math.max(0,kick-.24);
+  firstPersonGun.userData.reload=Math.max(0,reload-.045);
   firstPersonGun.visible=firstPerson&&player.alive&&!player.hidden;
 }
 function createPickup(id,type,x,z) {
@@ -1793,6 +1802,16 @@ function updateWeaponHud() {
   const id=player.weapon||'pistol',w=WEAPONS[id],a=getAmmo(player,id)||{ammo:0,reserve:0};
   $('weaponName').textContent=`${w.icon} ${w.name}`;$('ammoText').textContent=`${a.ammo} / ${a.reserve}`;
 }
+function triggerWeaponKick(shooter){
+  const view=shooter===player?localAvatar:remoteAvatar;
+  const rig=shooter===player&&firstPerson?firstPersonGun:view?.gun;
+  if(rig)rig.userData.kick=1;
+}
+function triggerReloadAnimation(shooter){
+  const view=shooter===player?localAvatar:remoteAvatar;
+  const rig=shooter===player&&firstPerson?firstPersonGun:view?.gun;
+  if(rig)rig.userData.reload=1;
+}
 function getMuzzleWorldPosition(shooter){
   const view=shooter===player?localAvatar:remoteAvatar;
   const rig=shooter===player&&firstPerson?firstPersonGun:(view?.gun||null);
@@ -1818,6 +1837,7 @@ function serverShoot(shooter,weaponId) {
   if(!w||!ammo||ammo.ammo<=0||!shooter.alive)return;
   if(elapsed-shooter.lastShot<w.rate*.82)return;
   shooter.lastShot=elapsed;ammo.ammo--;
+  if(shooter!==player)triggerWeaponKick(shooter);
   const yaw=shooter.yaw||0,pitch=clamp(shooter.pitch||0,-.7,.7),cp=Math.cos(pitch);
   const muzzle=getMuzzleWorldPosition(shooter);
   const origin={x:muzzle.x,y:muzzle.y,z:muzzle.z};
@@ -1851,6 +1871,7 @@ function serverShoot(shooter,weaponId) {
 function shoot() {
   if(state!=='play'||!player.alive)return;
   const id=player.weapon||'pistol',a=getAmmo(player,id);
+  triggerWeaponKick(player);
   if(!a||a.ammo<=0){toast('خشاب خالیه! R برای خشاب‌گذاری');return;}
   const w=WEAPONS[id];if(elapsed-player.lastShot<w.rate*.82)return;
   if(isLocalHostAuthority())serverShoot(player,id);
@@ -1860,6 +1881,7 @@ function shoot() {
 function reloadPlayer(p) {
   const a=getAmmo(p);if(!a||a.ammo>=WEAPONS[p.weapon].mag||a.reserve<=0)return;
   const n=Math.min(WEAPONS[p.weapon].mag-a.ammo,a.reserve);a.ammo+=n;a.reserve-=n;
+  triggerReloadAnimation(p);
   if(p===player)toast('خشاب پر شد');
 }
 function reload() {
