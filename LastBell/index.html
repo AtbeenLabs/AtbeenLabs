@@ -1206,7 +1206,7 @@ function makeAvatar(color, character='student') {
   for(const x of [-.2,.2]) { const legPivot=new THREE.Group();legPivot.position.set(x,.78,0);const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.13,.48,4,8),dark);leg.position.y=-.34;legPivot.add(leg);root.add(legPivot);legs.push(legPivot); }
   const backpack=new THREE.Mesh(new THREE.BoxGeometry(.48,.55,.18),character==='astronaut'?torsoMat:dark); backpack.position.set(0,1.22,.28); root.add(backpack);
   const label=makeLabelSprite(); root.add(label);
-  const gun=new THREE.Group(); gun.position.set(.42,1.34,-.3); root.add(gun);
+  const gun=new THREE.Group(); gun.position.set(.40,1.26,-.38); gun.rotation.set(0,0,0); root.add(gun);
   return {root,shirt,head,mouths,label,gun,armL,armR,legs,mixer:null,assetLoaded:false};
 }
 function drawPlayerLabel(view,p) {
@@ -1248,7 +1248,7 @@ function updateAvatar(view,p,dt=1/60) {
   const current=p.weapon||'pistol';
   if(view.gun.userData.weapon!==current || view.gun.userData.assetVersion!==weaponAssetVersion) {
     view.gun.clear();
-    const held=makeGunVisual(current,.5);
+    const held=makeGunVisual(current,.82);
     view.gun.add(held);
     view.gun.userData.weapon=current;
     view.gun.userData.assetVersion=weaponAssetVersion;
@@ -1260,7 +1260,8 @@ let remoteAvatar=null;
 
 /* ---------- مدل‌های اسلحه و جایزه ---------- */
 function makeGunVisual(id,scale=1) {
-  if(weaponTemplates[id]){const custom=weaponTemplates[id].clone();custom.scale.multiplyScalar(scale);return custom;}
+  const sizeFactor={pistol:.72,smg:.82,shotgun:.96,rifle:1,sniper:1.12,lmg:1.02,crossbow:.98,launcher:1.12,flamethrower:1.02,ice:.94}[id]||1;
+  if(weaponTemplates[id]){const custom=weaponTemplates[id].clone();custom.scale.multiplyScalar(scale*sizeFactor);return custom;}
   const group=new THREE.Group(); const spec=WEAPONS[id]||WEAPONS.pistol;
   const bodyMat=new THREE.MeshStandardMaterial({color:spec.color,metalness:.62,roughness:.35});
   const darkMat=new THREE.MeshStandardMaterial({color:0x20283a,metalness:.35,roughness:.55});
@@ -1279,7 +1280,7 @@ const firstPersonGun=new THREE.Group();firstPersonGun.position.set(.34,-.28,-.72
 function updateFirstPersonGun(){
   const id=player.weapon||'pistol';
   if(firstPersonGun.userData.weapon!==id||firstPersonGun.userData.assetVersion!==weaponAssetVersion){
-    firstPersonGun.clear();firstPersonGun.add(makeGunVisual(id,.78));
+    firstPersonGun.clear();firstPersonGun.add(makeGunVisual(id,.9));
     firstPersonGun.userData.weapon=id;firstPersonGun.userData.assetVersion=weaponAssetVersion;
   }
   firstPersonGun.position.set(aiming?.045:.34,aiming?-.22:-.28,aiming?-.62:-.72);
@@ -1402,21 +1403,26 @@ function prepareCharacterModel(model,height=2.35) {
 // around the hand pivot, rather than incorrectly scaling by model height.
 function prepareWeaponModel(model) {
   model.updateMatrixWorld(true);
-  const b0=new THREE.Box3().setFromObject(model),s0=b0.getSize(new THREE.Vector3());
-  if(s0.x>=s0.y&&s0.x>=s0.z) model.rotation.y+=Math.PI/2;
-  else if(s0.y>=s0.x&&s0.y>=s0.z) model.rotation.x-=Math.PI/2;
-  else model.rotation.y+=Math.PI;
-  model.updateMatrixWorld(true);
   let box=new THREE.Box3().setFromObject(model);
-  const size=box.getSize(new THREE.Vector3()),length=Math.max(size.x,size.y,size.z,.001);
-  model.scale.multiplyScalar(.92/length);
-  model.updateMatrixWorld(true);
+  const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+  let forward=null,muzzleNode=null;
+  model.traverse(o=>{if(!muzzleNode&&/(muzzle|barrel|nozzle|front_tip|gun_tip)/i.test(o.name||''))muzzleNode=o;});
+  if(muzzleNode)forward=muzzleNode.getWorldPosition(new THREE.Vector3()).sub(center);
+  if(!forward||forward.length()<.02){
+    if(size.x>=size.y&&size.x>=size.z)forward=new THREE.Vector3(1,0,0);
+    else if(size.y>=size.x&&size.y>=size.z)forward=new THREE.Vector3(0,1,0);
+    else forward=new THREE.Vector3(0,0,1);
+  }
+  const align=new THREE.Quaternion().setFromUnitVectors(forward.normalize(),new THREE.Vector3(0,0,-1));
+  model.quaternion.premultiply(align);model.updateMatrixWorld(true);
   box=new THREE.Box3().setFromObject(model);
-  const center=box.getCenter(new THREE.Vector3());
-  model.position.x-=center.x; model.position.y-=center.y; model.position.z-=center.z;
+  const fitted=box.getSize(new THREE.Vector3()),length=Math.max(fitted.x,fitted.y,fitted.z,.001);
+  model.scale.multiplyScalar(.92/length);model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  const fittedCenter=box.getCenter(new THREE.Vector3());
+  model.position.x-=fittedCenter.x;model.position.y-=fittedCenter.y;model.position.z-=fittedCenter.z;
   model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
-  model.updateMatrixWorld(true);
-  return model;
+  model.updateMatrixWorld(true);return model;
 }
 async function applyAvatarAsset(view,character='student') {
   const model=await loadFirstModel(CUSTOM_ASSETS[character]||[])||await loadFirstModel(CUSTOM_ASSETS.player);if(!model||!view)return;
@@ -2205,29 +2211,28 @@ async function joinRoom() {
   }
 }
 async function loadWeaponTemplates(){
-  for(const id of Object.keys(WEAPONS)){
-    const paths=[`./assets/weapons/${id}.glb`,`./assets/weapons/${id}.gltf`,`./assets/weapons/${id}.fbx`,`./assets/weapons/${id}.obj`];
-    const model=await loadFirstModel(paths);
-    if(!model)continue;
-    weaponTemplates[id]=prepareWeaponModel(model);
-    weaponAssetVersion++;
-    for(const p of pickups){
-      if(p.type!==id)continue;
-      const old=p.mesh.children.find(c=>c.userData?.fallbackWeapon===true);
-      if(old)old.visible=false;
-      const visual=makeGunVisual(id,.72);
-      p.mesh.add(visual);
+  const ids=Object.keys(WEAPONS);let next=0;
+  async function worker(){
+    while(next<ids.length){
+      const id=ids[next++];
+      const paths=[`./assets/weapons/${id}.glb`,`./assets/weapons/${id}.gltf`,`./assets/weapons/${id}.fbx`,`./assets/weapons/${id}.obj`];
+      const model=await loadFirstModel(paths);if(!model)continue;
+      weaponTemplates[id]=prepareWeaponModel(model);weaponAssetVersion++;
+      for(const p of pickups){
+        if(p.type!==id)continue;
+        const old=p.mesh.children.find(c=>c.userData?.fallbackWeapon===true);if(old)old.visible=false;
+        p.mesh.add(makeGunVisual(id,.82));
+      }
     }
   }
+  await Promise.all([worker(),worker()]);
 }
 loadWeaponTemplates();
 function prepareMapModel(model,season) {
   model.updateMatrixWorld(true);
   let box=new THREE.Box3().setFromObject(model);
   let size=box.getSize(new THREE.Vector3());
-  // Detect uncommon Z-up / X-up exports, while leaving standard glTF Y-up maps untouched.
-  if(size.z>0.001 && size.z<Math.min(size.x,size.y)*.35) model.rotation.x-=Math.PI/2;
-  else if(size.x>0.001 && size.x<Math.min(size.y,size.z)*.35) model.rotation.z+=Math.PI/2;
+  // GLB/glTF is Y-up; width/depth ratios cannot reliably tell us a different up-axis.
   model.updateMatrixWorld(true);
   box=new THREE.Box3().setFromObject(model);
   size=box.getSize(new THREE.Vector3());
@@ -2560,6 +2565,7 @@ function step(dt) {
       bot.voiceCooldown=Math.max(0,(bot.voiceCooldown||0)-dt);
     bot.chemicalCooldown=Math.max(0,(bot.chemicalCooldown||0)-dt);
       const moving=!!(bot.mesh.userData.lastX!==undefined&&Math.hypot(bot.x-bot.mesh.userData.lastX,bot.z-bot.mesh.userData.lastZ)>.0008);
+      bot.isMoving=moving;bot.walkPhase+=moving?dt*8:dt*1.4;
       bot.mesh.userData.lastX=bot.x;bot.mesh.userData.lastZ=bot.z;
       const swing=moving?Math.sin(clock.elapsedTime*8+(bot.id==='rashidi'?0:1))*.56:Math.sin(clock.elapsedTime*1.5)*.025;
       if(bot.arms){bot.arms[0].rotation.x=swing;bot.arms[1].rotation.x=-swing;}
