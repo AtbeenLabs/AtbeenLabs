@@ -1582,7 +1582,7 @@ function playSepehrHit() {
   const a=$('sepehrAudio');if(!a)return;
   try{const p=a.play();if(p?.catch)p.catch(()=>{});}catch(e){}
 }
-function showEnemySpeech(bot,line){
+function showEnemySpeech(bot,line,fromNetwork=false){
   const el=$('speech');if(!el)return;
   el.textContent=`${bot.name}: ${line}`;
   el.classList.toggle('rashidi',bot.id==='rashidi');
@@ -1600,6 +1600,7 @@ function showEnemySpeech(bot,line){
     }
   }catch(e){}
   bot.voiceCooldown=7+Math.random()*4;
+  if(!fromNetwork&&online&&isHost)sendNet({type:'npcSpeak',id:bot.id,line:String(line).slice(0,120)});
 }
 function playFartSound(){
   const ctx=ensureGameAudioContext();if(!ctx)return;
@@ -1644,13 +1645,9 @@ function spawnChemicalCloud(position){
   scene.add(group);
   chemicalClouds.push({group,materials:cloudMaterials,life:4.2,maxLife:4.2,tick:0,radius:4.1});
 }
-function throwSepehrChemical(bot,target){
-  if(bot.chemicalThrowing||bot.chemicalCooldown>0)return;
-  bot.chemicalThrowing=true;bot.chemicalCooldown=11;
-  spawnFartPuff(bot);
-  showEnemySpeech(bot,'اینم گاز شیمیایی! فرار کن!');
-  const start=new THREE.Vector3(bot.x,1.55,bot.z);
-  const dest=new THREE.Vector3(target.x,.15,target.z);
+function spawnChemicalVisualProjectile(bot,target){
+  const start=new THREE.Vector3(Number(bot.x)||0,1.55,Number(bot.z)||0);
+  const dest=new THREE.Vector3(Number(target.x)||player.x,.15,Number(target.z)||player.z);
   const horizontal=Math.hypot(dest.x-start.x,dest.z-start.z);
   const flight=clamp(horizontal/15,.48,1.15);
   const velocity=new THREE.Vector3((dest.x-start.x)/flight,(dest.y-start.y+.5*9.8*flight*flight)/flight,(dest.z-start.z)/flight);
@@ -1659,6 +1656,14 @@ function throwSepehrChemical(bot,target){
   mesh.position.copy(start);scene.add(mesh);
   const aura=new THREE.PointLight(0x9bdd48,1.7,3,2);mesh.add(aura);
   chemicalProjectiles.push({mesh,velocity,age:0,flight,trail:[]});
+}
+function throwSepehrChemical(bot,target){
+  if(bot.chemicalThrowing||bot.chemicalCooldown>0)return;
+  bot.chemicalThrowing=true;bot.chemicalCooldown=11;
+  spawnFartPuff(bot);
+  showEnemySpeech(bot,'اینم گاز شیمیایی! فرار کن!');
+  if(online&&isHost)sendNet({type:'chemicalFx',x:bot.x,z:bot.z,targetX:target.x,targetZ:target.z});
+  spawnChemicalVisualProjectile(bot,target);
   bot.chemicalThrowing=false;
 }
 function updateChemicalEffects(dt){
@@ -2095,6 +2100,8 @@ function handleNetworkMessage(m) {
   if(m.type==='reload'&&isHost&&remotePlayer){reloadPlayer(remotePlayer);return;}
   if(m.type==='push'&&isHost&&remotePlayer){const old=player;remotePlayer.stamina=Math.min(100,(remotePlayer.stamina||0)+40);player=remotePlayer;pushEnemies();player=old;return;}
   if(m.type==='chat'){showIncomingMessage(m.message||'');return;}
+  if(m.type==='npcSpeak'&&!isHost){const bot=enemies.find(e=>e.id===m.id);if(bot)showEnemySpeech(bot,m.line||'صداتو شنیدم!',true);return;}
+  if(m.type==='chemicalFx'&&!isHost){const bot=enemies.find(e=>e.id==='sepehr');if(bot){spawnFartPuff(bot);const target={x:Number(m.targetX)||player.x,z:Number(m.targetZ)||player.z};spawnChemicalVisualProjectile(bot,target);}return;}
   if(m.type==='select'&&isHost&&remotePlayer){if(remotePlayer.inventory[m.id])remotePlayer.weapon=m.id;return;}
   if(m.type==='fx'&&!isHost){addTracer(m.x1,m.z1,m.x2,m.z2,m.color||0xffffff,m.y1??1.25,m.y2??1.2);return;}
   if(m.type==='pushFx'&&!isHost){feed('ضربه وارد شد');return;}
@@ -2536,6 +2543,7 @@ function hasLineOfSight(a,b) {
 function updateBots(dt) {
   if(!isLocalHostAuthority())return;
   const candidates=getPlayers().filter(p=>p.alive&&!p.hidden);
+  for(const bot of enemies)bot.isMoving=false;
   for(const bot of enemies){
     if(!bot.alive)continue;
     let target=null;
