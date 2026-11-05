@@ -1390,9 +1390,9 @@ function animateRigBones(rig,phase,moving,time){
 }
 function animateAssetMotion(assetMotion,rig,mixer,dt,phase,moving,time){
   if(assetMotion){
-    assetMotion.position.y=(moving?Math.abs(Math.sin(phase*2))*.035:Math.sin(time*1.45)*.012);
-    assetMotion.rotation.z=moving?Math.sin(phase)*.025:Math.sin(time*.9)*.006;
-    assetMotion.rotation.x=moving?-.018:Math.sin(time*1.2)*.004;
+    assetMotion.position.y=(moving?Math.abs(Math.sin(phase*2))*.06:Math.sin(time*1.45)*.018);
+    assetMotion.rotation.z=moving?Math.sin(phase)*.045:Math.sin(time*.9)*.012;
+    assetMotion.rotation.x=moving?-.045:Math.sin(time*1.2)*.008;
   }
   if(mixer)mixer.update(dt);
   else animateRigBones(rig,phase,moving,time);
@@ -2371,6 +2371,8 @@ function beginMatch(sendStart=true) {
   matchStartPromise=(async()=>{
     state='loading';matchStarted=false;nextFrameDueAt=0;
     setAssetLoading(true,'در حال آماده‌سازی نقشه و مدل‌ها…',.03);
+    // Unlock positional audio directly from the user's Start click before the map await.
+    startSepehrMusic();
     try{
       await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,35)));
       await loadSeasonMap(Math.ceil(campaignLevel/10));
@@ -2388,7 +2390,6 @@ function beginMatch(sendStart=true) {
     for(const p of pickups){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
     for(const p of [...drinkPickups,...energyPickups]){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
     $('menu').classList.add('hidden');$('levelsScreen').classList.add('hidden');$('settingsScreen').classList.add('hidden');$('over').classList.add('hidden');$('pause').classList.add('hidden');$('phonePanel').classList.add('hidden');
-    startSepehrMusic();
     $('timer').textContent=sandboxMode?'∞':'02:00';$('spectateMsg').textContent='';$('vignette').style.opacity=0;
     $('playerName').textContent=player.name;updateWeaponHud();
     if(sendStart&&online&&isHost)sendNet({type:'start',level:campaignLevel,gameMode,sandboxMode});
@@ -2631,7 +2632,7 @@ function step(dt) {
   }
   if(online&&!isHost)sendLocalInput(dt);
   if(online&&isHost)hostSnapshot(dt);
-  updateCamera(dt);
+  updateCamera(dt);updateSepehrSpatialAudio();
   updateAvatar(localAvatar,player,dt);
   if(remotePlayer&&remoteAvatar)updateAvatar(remoteAvatar,remotePlayer,dt);
   for(const p of pickups)p.mesh.rotation.y+=dt*.8;
