@@ -2273,13 +2273,15 @@ function setupConnection(c,incoming) {
   });
   c.on('data',handleNetworkMessage);
   c.on('close',()=>{
-    remotePlayer=null;
+    if(conn!==c)return;
+    conn=null;
+    remotePlayer=null;remoteVoicePeerId='';
     if(remoteAvatar){scene.remove(remoteAvatar.root);remoteAvatar=null;}
     if(!c.opened)status(incoming?'اتصال میزبان به سرور روم قطع شد.':'روم پیدا نشد یا میزبان هنوز وصل نیست.','err');
     else status('ارتباط با روم بسته شد.','err');
   });
   c.on('error',()=>{
-    status('اتصال به سرور آنلاین روم ناموفق بود؛ اینترنت را بررسی کن.','err');
+    if(conn===c)status('اتصال به سرور آنلاین روم ناموفق بود؛ اینترنت را بررسی کن.','err');
   });
 }
 function ensureRemote(data) {
@@ -2475,6 +2477,7 @@ async function joinRoom() {
   try{
     if(conn){try{conn.close();}catch{}conn=null;}
     resetVoicePeer();startVoicePeer();
+    if(remoteAvatar?.root)remoteAvatar.root.removeFromParent();
     player=newPlayer('guest',myName(),myColor(),$('avatarType').value);
     if(localAvatar?.root)localAvatar.root.removeFromParent();
     localAvatar=makeAvatar(player.color,player.character);scene.add(localAvatar.root);applyAvatarAsset(localAvatar,player.character);
