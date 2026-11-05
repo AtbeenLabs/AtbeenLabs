@@ -111,6 +111,12 @@
   .stat-big { font-size: 46px; font-weight: bold; color: #6dff9a; text-shadow: 0 0 22px rgba(109,255,154,.45); font-variant-numeric: tabular-nums; }
   code { background: #1a2138; padding: 2px 6px; border-radius: 5px; font-size: 12px; }
 
+  #assetLoading { position:fixed; inset:0; display:none; place-items:center; z-index:50; background:rgba(2,5,13,.94); backdrop-filter:blur(8px); color:#edf6ff; }
+  #assetLoading.active { display:grid; }
+  #assetLoadingCard { width:min(420px,88vw); padding:24px; border:1px solid #435678; border-radius:18px; background:#0b1428; box-shadow:0 24px 90px #000b; text-align:center; }
+  #assetLoadingTrack { height:12px; width:100%; border-radius:99px; overflow:hidden; background:#1a2740; border:1px solid #3b4d70; margin:18px 0 10px; }
+  #assetLoadingBar { display:block; height:100%; width:0%; border-radius:99px; background:linear-gradient(90deg,#42b5ff,#77f0b2); transition:width .18s; }
+  #assetLoadingText { font-size:12px; color:#b9cbea; }
   #levelHud { position:fixed; left:50%; top:14px; transform:translateX(-50%); z-index:4; text-align:center; padding:5px 12px; border:1px solid #465777; border-radius:999px; background:#07101dcc; color:#d9eaff; font-size:12px; font-weight:bold; pointer-events:none; }
   #hideNotice { position:fixed; left:50%; bottom:12%; transform:translateX(-50%); z-index:7; padding:10px 16px; border:1px solid #7d9bba; border-radius:12px; background:#07101de8; color:#d9f5ff; font-weight:bold; display:none; }
   #phonePanel { position:fixed; right:14px; top:50%; transform:translateY(-50%); width:min(330px,90vw); padding:14px; border:1px solid #54658d; border-radius:18px; background:rgba(5,10,24,.96); z-index:12; box-shadow:0 20px 70px #000b; }
@@ -244,6 +250,14 @@
     <button id="touchSprint" class="action">دویدن</button>
     <button id="touchHide" class="action">مخفی‌شدن</button>
     <button id="touchPush" class="action">هل‌دادن</button>
+  </div>
+</div>
+<div id="assetLoading" aria-live="polite">
+  <div id="assetLoadingCard">
+    <div style="font-size:34px">🎮</div>
+    <h2 id="assetLoadingTitle">در حال آماده‌سازی مرحله</h2>
+    <div id="assetLoadingTrack"><span id="assetLoadingBar"></span></div>
+    <div id="assetLoadingText">در حال بارگذاری نقشه و مدل‌ها…</div>
   </div>
 </div>
 <div id="darkVeil" style="position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;box-shadow:inset 0 0 140px 40px rgba(0,0,0,.96);transition:opacity 1s"></div>
@@ -1130,7 +1144,13 @@ let fireHeld = false, videoRecorder = null, videoChunks = [], screenMediaRecorde
 let notifNoiseTimer=0, drinkTemplate=null, messageDingContext=null;let introTime=0,introStartCamera=null;
 let gameAudioContext=null,sepehrMediaSource=null,sepehrPanner=null;
 let chemicalProjectiles=[],chemicalClouds=[],fartPuffs=[],muzzleFlashes=[];
-let speechHideTimer=0;
+let speechHideTimer=0,matchStartPromise=null,mapLoadPromise=null,mapLoadingSeason=0;
+function setAssetLoading(active,message='در حال آماده‌سازی…',progress=0){
+  const panel=$('assetLoading');if(!panel)return;
+  panel.classList.toggle('active',!!active);
+  $('assetLoadingText').textContent=message;
+  $('assetLoadingBar').style.width=`${Math.round(clamp(progress,0,1)*100)}%`;
+}
 let cameraSensitivity = 1, baseFov=76, lastKnownTarget = null, isRecording = false;
 try { unlockedLevel = Math.max(1, Math.min(40, Number(localStorage.getItem('lastBellUnlocked') || 1))); } catch(e) { unlockedLevel = 1; }
 const gltfLoader = new GLTFLoader();
@@ -1330,13 +1350,13 @@ function updateTracers(dt) {
 }
 
 /* ---------- بارگذاری مدل‌های سفارشی؛ در نبود فایل، مدل داخلی استفاده می‌شود ---------- */
-function loadOneModel(url) {
+function loadOneModel(url,onProgress) {
   const ext=url.split('.').pop().toLowerCase();
   const loader=ext==='fbx'?assetLoaders.fbx:ext==='obj'?assetLoaders.obj:assetLoaders.gltf;
-  return new Promise((resolve,reject)=>loader.load(url,data=>{const model=ext==='glb'||ext==='gltf'?data.scene:data;if(data.animations?.length)model.userData.animations=data.animations;resolve(model);},undefined,reject));
+  return new Promise((resolve,reject)=>loader.load(url,data=>{const model=ext==='glb'||ext==='gltf'?data.scene:data;if(data.animations?.length)model.userData.animations=data.animations;resolve(model);},event=>{if(onProgress)onProgress(event);},reject));
 }
-async function loadFirstModel(paths) {
-  for(const path of paths||[]) { try { return await loadOneModel(path); } catch(e) {} }
+async function loadFirstModel(paths,onProgress) {
+  for(const path of paths||[]) { try { return await loadOneModel(path,onProgress); } catch(e) {} }
   return null;
 }
 function normalizeModel(model,height=2.4) {
@@ -2274,31 +2294,44 @@ function collectMapColliders(model) {
 }
 async function loadSeasonMap(season){
   if(loadedMapSeason===season)return;
-  while(seasonMapGroup.children.length){seasonMapGroup.remove(seasonMapGroup.children[0]);}
-  seasonMapColliders.length=0;
-  const paths=[`./assets/maps/season${season}.glb`,`./assets/maps/season${season}.gltf`,`./assets/maps/season${season}.fbx`,`./assets/maps/season${season}.obj`];
-  if(season===1)paths.push('./assets/maps/school.glb');
-  if(season===2)paths.push('./assets/maps/map.glb');
-  const model=await loadFirstModel(paths);
-  WALLS.length=0;
-  if(model){
-    try{
-      prepareMapModel(model,season);
-      defaultMapGroup.visible=false;hideablesGroup.visible=true;
-      const count=collectMapColliders(model);
-      WALLS.push(...hideableColliders);
-      seasonMapGroup.add(model);
-      console.info(`[LastBell] نقشه فصل ${season} بارگذاری شد؛ ${count} برخورد`);
-    }catch(error){
-      console.error('[LastBell] Map setup failed:',error);
+  if(mapLoadPromise&&mapLoadingSeason===season)return mapLoadPromise;
+  mapLoadingSeason=season;
+  mapLoadPromise=(async()=>{
+    // Let the loading panel paint before GLTF parsing starts.
+    await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,35)));
+    while(seasonMapGroup.children.length){seasonMapGroup.remove(seasonMapGroup.children[0]);}
+    seasonMapColliders.length=0;
+    const paths=[`./assets/maps/season${season}.glb`,`./assets/maps/season${season}.gltf`,`./assets/maps/season${season}.fbx`,`./assets/maps/season${season}.obj`];
+    if(season===1)paths.push('./assets/maps/school.glb');
+    if(season===2)paths.push('./assets/maps/map.glb');
+    const model=await loadFirstModel(paths,event=>{
+      if(event?.lengthComputable)setAssetLoading(true,`دریافت نقشه فصل ${season}: ${Math.round(event.loaded/event.total*100)}٪`,event.loaded/event.total);
+      else setAssetLoading(true,`در حال دریافت و آماده‌سازی نقشه فصل ${season}…`,.25);
+    });
+    WALLS.length=0;
+    if(model){
+      try{
+        setAssetLoading(true,`ساخت برخوردها و آماده‌سازی نقشه فصل ${season}…`,.9);
+        prepareMapModel(model,season);
+        defaultMapGroup.visible=false;hideablesGroup.visible=true;
+        const count=collectMapColliders(model);
+        WALLS.push(...hideableColliders);
+        seasonMapGroup.add(model);
+        console.info(`[LastBell] نقشه فصل ${season} بارگذاری شد؛ ${count} برخورد`);
+      }catch(error){
+        console.error('[LastBell] Map setup failed:',error);
+        defaultMapGroup.visible=true;WALLS.push(...defaultMapColliders,...hideableColliders);
+        seasonMapGroup.clear();
+      }
+    }else{
+      console.error(`[LastBell] Map model not found for season ${season}; using built-in school.`);
       defaultMapGroup.visible=true;WALLS.push(...defaultMapColliders,...hideableColliders);
-      seasonMapGroup.clear();
     }
-  }else{
-    console.error(`[LastBell] Map model not found for season ${season}; using built-in school.`);
-    defaultMapGroup.visible=true;WALLS.push(...defaultMapColliders,...hideableColliders);
-  }
-  rebuildNavGrid();loadedMapSeason=season;
+    rebuildNavGrid();loadedMapSeason=season;
+    setAssetLoading(true,`آماده شد · فصل ${season}`,1);
+  })();
+  try{return await mapLoadPromise;}
+  finally{mapLoadPromise=null;mapLoadingSeason=0;}
 }
 function applySeason(level) {
   currentSeason=Math.ceil(level/10);loadSeasonMap(currentSeason);
@@ -2327,23 +2360,34 @@ function startSandbox(){gameMode='sandbox';sandboxMode=true;online=false;isHost=
 function applySettings(){applyRenderQuality($('qualitySelect').value);targetGameFPS=clamp(Number($('fpsLimitSelect').value)||40,30,60);cameraSensitivity=Number($('sensitivityRange').value)||1;baseFov=Number($('fovRange').value)||76;camera.fov=baseFov;camera.updateProjectionMatrix();toast(`تنظیمات ذخیره شد · ${targetGameFPS} FPS`);}
 function beginMatch(sendStart=true) {
   if(isHost&&online&&!remotePlayer){toast('اول دوستت باید وارد اتاق بشه');return;}
-  elapsed=0;matchStarted=true;state='play';nextFrameDueAt=0;hideState=null;player.hidden=false;if(activeDrink){camera.remove(activeDrink.prop);activeDrink=null;}pushCooldown=0;introTime=2.8;introStartCamera=new THREE.Vector3(DOOR_X,5.5,34);
-  applySeason(campaignLevel);
-  player.x=isHost?8:4;player.z=0;player.y=0;player.vy=0;player.hp=MAX_HP;player.alive=true;player.kills=0;player.deaths=0;player.stamina=100;player.deadUntil=0;player.killerType='';player.killerId='';player.lastShot=-10;
-  player.inventory={pistol:{ammo:12,reserve:72}};player.weapon='pistol';player.voice=0;player.lastShot=-10;
-  if(remotePlayer){remotePlayer.x=isHost? -8:8;remotePlayer.z=0;remotePlayer.hp=MAX_HP;remotePlayer.alive=true;remotePlayer.hidden=false;remotePlayer.kills=0;remotePlayer.deaths=0;remotePlayer.deadUntil=0;remotePlayer.inventory={pistol:{ammo:12,reserve:72}};remotePlayer.weapon='pistol';remotePlayer.voice=0;remotePlayer.lastShot=-10;remotePlayer.killerType='';remotePlayer.killerId='';}
-  enemies[0].x=24;enemies[0].z=-10.75;enemies[1].x=46;enemies[1].z=-38;
-  const wanted=2+Math.floor((campaignLevel-1)/4);
-  while(enemies.length<wanted){const n=enemies.length+1;const e=makeMonster(`نکست‌بات ${n}`,Math.cos(n*2.1)*43,Math.sin(n*2.1)*34,0x55436b,n%2===0);enemies.push(e);}
-  for(const e of enemies){e.x=e.homeX;e.z=e.homeZ;e.stuckT=0;e.stunT=0;e.hp=e.maxHp=100;e.alive=true;e.mesh.visible=true;e.alertedHide=false;e.hideTargetId='';e.burnTimer=0;e.freezeTimer=0;e.thawTimer=2;drawEnemyHealth(e.healthTag,e.name,e.hp,e.maxHp);e.mesh.position.set(e.x,0,e.z);}
-  for(const p of pickups){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
-  for(const p of [...drinkPickups,...energyPickups]){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
-  $('menu').classList.add('hidden');$('levelsScreen').classList.add('hidden');$('settingsScreen').classList.add('hidden');$('over').classList.add('hidden');$('pause').classList.add('hidden');$('phonePanel').classList.add('hidden');
-  startSepehrMusic();
-  $('timer').textContent=sandboxMode?'∞':'02:00';$('spectateMsg').textContent='';$('vignette').style.opacity=0;
-  $('playerName').textContent=player.name;updateWeaponHud();
-  if(sendStart&&online&&isHost)sendNet({type:'start',level:campaignLevel,gameMode,sandboxMode});
-  clock.getDelta();requestPointer();
+  if(matchStartPromise)return matchStartPromise;
+  matchStartPromise=(async()=>{
+    state='loading';matchStarted=false;nextFrameDueAt=0;
+    setAssetLoading(true,'در حال آماده‌سازی نقشه و مدل‌ها…',.03);
+    try{
+      await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,35)));
+      await loadSeasonMap(Math.ceil(campaignLevel/10));
+    }catch(error){console.error('[LastBell] match preparation failed:',error);}
+    setAssetLoading(false);
+    elapsed=0;matchStarted=true;state='play';nextFrameDueAt=0;hideState=null;player.hidden=false;if(activeDrink){camera.remove(activeDrink.prop);activeDrink=null;}pushCooldown=0;introTime=2.8;introStartCamera=new THREE.Vector3(DOOR_X,5.5,34);
+    applySeason(campaignLevel);
+    player.x=isHost?8:4;player.z=0;player.y=0;player.vy=0;player.hp=MAX_HP;player.alive=true;player.kills=0;player.deaths=0;player.stamina=100;player.deadUntil=0;player.killerType='';player.killerId='';player.lastShot=-10;
+    player.inventory={pistol:{ammo:12,reserve:72}};player.weapon='pistol';player.voice=0;player.lastShot=-10;
+    if(remotePlayer){remotePlayer.x=isHost?-8:8;remotePlayer.z=0;remotePlayer.hp=MAX_HP;remotePlayer.alive=true;remotePlayer.hidden=false;remotePlayer.kills=0;remotePlayer.deaths=0;remotePlayer.deadUntil=0;remotePlayer.inventory={pistol:{ammo:12,reserve:72}};remotePlayer.weapon='pistol';remotePlayer.voice=0;remotePlayer.lastShot=-10;remotePlayer.killerType='';remotePlayer.killerId='';}
+    enemies[0].x=24;enemies[0].z=-10.75;enemies[1].x=46;enemies[1].z=-38;
+    const wanted=2+Math.floor((campaignLevel-1)/4);
+    while(enemies.length<wanted){const n=enemies.length+1;const e=makeMonster(`نکست‌بات ${n}`,Math.cos(n*2.1)*43,Math.sin(n*2.1)*34,0x55436b,n%2===0);enemies.push(e);}
+    for(const e of enemies){e.x=e.homeX;e.z=e.homeZ;e.stuckT=0;e.stunT=0;e.hp=e.maxHp=100;e.alive=true;e.mesh.visible=true;e.alertedHide=false;e.hideTargetId='';e.burnTimer=0;e.freezeTimer=0;e.thawTimer=2;e.voiceCooldown=1+Math.random()*3;e.chemicalCooldown=5+Math.random()*5;drawEnemyHealth(e.healthTag,e.name,e.hp,e.maxHp);e.mesh.position.set(e.x,0,e.z);}
+    for(const p of pickups){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
+    for(const p of [...drinkPickups,...energyPickups]){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
+    $('menu').classList.add('hidden');$('levelsScreen').classList.add('hidden');$('settingsScreen').classList.add('hidden');$('over').classList.add('hidden');$('pause').classList.add('hidden');$('phonePanel').classList.add('hidden');
+    startSepehrMusic();
+    $('timer').textContent=sandboxMode?'∞':'02:00';$('spectateMsg').textContent='';$('vignette').style.opacity=0;
+    $('playerName').textContent=player.name;updateWeaponHud();
+    if(sendStart&&online&&isHost)sendNet({type:'start',level:campaignLevel,gameMode,sandboxMode});
+    clock.getDelta();requestPointer();
+  })().finally(()=>{matchStartPromise=null;});
+  return matchStartPromise;
 }
 function requestPointer() { try{renderer.domElement.requestPointerLock?.();}catch(e){} }
 $('hostBtn').addEventListener('click',createHostRoom);
