@@ -1579,8 +1579,18 @@ function startSepehrMusic(){
   }
 }
 function playSepehrHit() {
-  const a=$('sepehrAudio');if(!a)return;
-  try{const p=a.play();if(p?.catch)p.catch(()=>{});}catch(e){}
+  const a=$('sepehrAudio');
+  const fallback=()=>{
+    const bot=enemies.find(e=>e.id==='sepehr');
+    if(bot)showEnemySpeech(bot,'آخ! این درد داشت!');
+  };
+  if(!a){fallback();return;}
+  try{
+    a.currentTime=0;
+    const p=a.play();
+    if(p?.catch)p.catch(fallback);
+    if(a.error)fallback();
+  }catch(e){fallback();}
 }
 function showEnemySpeech(bot,line,fromNetwork=false){
   const el=$('speech');if(!el)return;
@@ -2103,7 +2113,13 @@ function handleNetworkMessage(m) {
   if(m.type==='npcSpeak'&&!isHost){const bot=enemies.find(e=>e.id===m.id);if(bot)showEnemySpeech(bot,m.line||'صداتو شنیدم!',true);return;}
   if(m.type==='chemicalFx'&&!isHost){const bot=enemies.find(e=>e.id==='sepehr');if(bot){spawnFartPuff(bot);const target={x:Number(m.targetX)||player.x,z:Number(m.targetZ)||player.z};spawnChemicalVisualProjectile(bot,target);}return;}
   if(m.type==='select'&&isHost&&remotePlayer){if(remotePlayer.inventory[m.id])remotePlayer.weapon=m.id;return;}
-  if(m.type==='fx'&&!isHost){addTracer(m.x1,m.z1,m.x2,m.z2,m.color||0xffffff,m.y1??1.25,m.y2??1.2);return;}
+  if(m.type==='fx'&&!isHost){
+    const start=new THREE.Vector3(m.x1,m.y1??1.25,m.z1),end=new THREE.Vector3(m.x2,m.y2??1.2,m.z2);
+    const dir=end.clone().sub(start);
+    spawnMuzzleFlash(start,dir,m.color||0xffffff);
+    addTracer(m.x1,m.z1,m.x2,m.z2,m.color||0xffffff,m.y1??1.25,m.y2??1.2);
+    return;
+  }
   if(m.type==='pushFx'&&!isHost){feed('ضربه وارد شد');return;}
   if(m.type==='snapshot'&&!isHost){applySnapshot(m);return;}
   if(m.type==='end'&&!isHost){finishMatch(m);return;}
@@ -2265,7 +2281,7 @@ function prepareMapModel(model,season) {
   size=box.getSize(new THREE.Vector3());
   if(!Number.isFinite(size.x)||!Number.isFinite(size.z)||size.x<.001||size.z<.001) throw new Error('ابعاد نقشه قابل تشخیص نیست');
   const targetW=YARD_BX*1.82,targetD=YARD_BZ*1.82;
-  const fit=clamp(Math.min(targetW/size.x,targetD/size.z),.0005,20);
+  const fit=Math.max(.00001,Math.min(targetW/size.x,targetD/size.z));
   model.scale.multiplyScalar(fit);
   model.updateMatrixWorld(true);
   box=new THREE.Box3().setFromObject(model);
