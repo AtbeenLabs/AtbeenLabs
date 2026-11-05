@@ -1128,6 +1128,9 @@ let roomPassword='',roomVisibility='private',roomName='زنگ آخر';
 let pushCooldown = 0, hideState = null, activeDrink = null, drinkPickups = [], energyPickups = [];
 let fireHeld = false, videoRecorder = null, videoChunks = [], screenMediaRecorder = null;
 let notifNoiseTimer=0, drinkTemplate=null, messageDingContext=null;let introTime=0,introStartCamera=null;
+let gameAudioContext=null,sepehrMediaSource=null,sepehrPanner=null;
+let chemicalProjectiles=[],chemicalClouds=[],fartPuffs=[],muzzleFlashes=[];
+let speechHideTimer=0;
 let cameraSensitivity = 1, baseFov=76, lastKnownTarget = null, isRecording = false;
 try { unlockedLevel = Math.max(1, Math.min(40, Number(localStorage.getItem('lastBellUnlocked') || 1))); } catch(e) { unlockedLevel = 1; }
 const gltfLoader = new GLTFLoader();
@@ -1444,7 +1447,7 @@ function makeMonster(name,x,z,color,deadly=false) {
   for(const side of [-1,1]){const pivot=new THREE.Group();pivot.position.set(side*.22,.74,0);const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.16,.52,4,8),cloth);leg.position.y=-.3;pivot.add(leg);const foot=new THREE.Mesh(new THREE.BoxGeometry(.26,.14,.4),shoe);foot.position.set(0,-.6,-.09);pivot.add(foot);root.add(pivot);legs.push(pivot);}
   if(deadly){const shoulder=new THREE.Mesh(new THREE.BoxGeometry(1.15,.22,.52),new THREE.MeshStandardMaterial({color:0x4d152b,metalness:.35}));shoulder.position.y=1.75;root.add(shoulder);}
   const healthTag=makeEnemyHealthSprite(name);root.add(healthTag);
-  const obj={id:name==='رشیدی'?'rashidi':name==='سپهر'?'sepehr':`bot_${enemies.length+1}`,name,x,z,homeX:x,homeZ:z,stuckT:0,sideSign:1,stunT:0,mesh:root,deadly,voiceTarget:0,hp:100,maxHp:100,alive:true,respawnAt:0,burnTimer:0,burnTick:0,freezeTimer:0,thawTimer:2,healthTag,arms:[armL,armR],legs,walkPhase:0,mixer:null,alertedHide:false};
+  const obj={id:name==='رشیدی'?'rashidi':name==='سپهر'?'sepehr':`bot_${enemies.length+1}`,name,x,z,homeX:x,homeZ:z,stuckT:0,sideSign:1,stunT:0,mesh:root,deadly,voiceTarget:0,hp:100,maxHp:100,alive:true,respawnAt:0,burnTimer:0,burnTick:0,freezeTimer:0,thawTimer:2,healthTag,arms:[armL,armR],legs,walkPhase:0,mixer:null,alertedHide:false,voiceCooldown:2+Math.random()*3,chemicalCooldown:5+Math.random()*4,isMoving:false,chemicalThrowing:false};
   scene.add(root); return obj;
 }
 function makeMonsters() {
@@ -1458,9 +1461,169 @@ function makeMonsters() {
   });
 }
 makeMonsters();
+function ensureGameAudioContext(){
+  if(!gameAudioContext){
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx)return null;
+    gameAudioContext=new Ctx();
+  }
+  if(gameAudioContext.state==='suspended')gameAudioContext.resume().catch(()=>{});
+  return gameAudioContext;
+}
+function updateSepehrSpatialAudio(){
+  if(!gameAudioContext||!sepehrPanner)return;
+  const listener=gameAudioContext.listener;
+  const pos=camera.position;
+  const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).normalize();
+  const now=gameAudioContext.currentTime;
+  const set=(param,value)=>{if(param?.setTargetAtTime)param.setTargetAtTime(value,now,.08);else if(param)param.value=value;};
+  set(listener.positionX,pos.x);set(listener.positionY,pos.y);set(listener.positionZ,pos.z);
+  set(listener.forwardX,forward.x);set(listener.forwardY,forward.y);set(listener.forwardZ,forward.z);
+  set(listener.upX,up.x);set(listener.upY,up.y);set(listener.upZ,up.z);
+  const sepehr=enemies.find(e=>e.id==='sepehr');
+  if(sepehr){
+    set(sepehrPanner.positionX,sepehr.x);
+    set(sepehrPanner.positionY,1.5);
+    set(sepehrPanner.positionZ,sepehr.z);
+  }
+}
+function startSepehrMusic(){
+  const audio=$('terminatorVideo');if(!audio)return;
+  audio.loop=true;audio.preload='auto';
+  try{
+    const ctx=ensureGameAudioContext();
+    if(ctx&&!sepehrMediaSource){
+      sepehrMediaSource=ctx.createMediaElementSource(audio);
+      sepehrPanner=ctx.createPanner();
+      sepehrPanner.panningModel='HRTF';
+      sepehrPanner.distanceModel='exponential';
+      sepehrPanner.refDistance=6;
+      sepehrPanner.maxDistance=70;
+      sepehrPanner.rolloffFactor=1.25;
+      sepehrMediaSource.connect(sepehrPanner);
+      sepehrPanner.connect(ctx.destination);
+    }
+    audio.volume=1;
+    updateSepehrSpatialAudio();
+    const p=audio.play();if(p?.catch)p.catch(()=>{audio.volume=.28;});
+  }catch(e){
+    audio.volume=.28;
+    const p=audio.play();if(p?.catch)p.catch(()=>{});
+  }
+}
 function playSepehrHit() {
   const a=$('sepehrAudio');if(!a)return;
-  try{a.currentTime=0;const promise=a.play();if(promise?.catch)promise.catch(()=>{});}catch(e){}
+  try{const p=a.play();if(p?.catch)p.catch(()=>{});}catch(e){}
+}
+function showEnemySpeech(bot,line){
+  const el=$('speech');if(!el)return;
+  el.textContent=`${bot.name}: ${line}`;
+  el.classList.toggle('rashidi',bot.id==='rashidi');
+  el.classList.add('show');
+  clearTimeout(speechHideTimer);
+  speechHideTimer=setTimeout(()=>el.classList.remove('show'),2500);
+  try{
+    if('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window){
+      const utter=new SpeechSynthesisUtterance(line);
+      utter.lang='fa-IR';utter.rate=bot.id==='rashidi'?.86:.98;utter.pitch=bot.id==='rashidi'?.72:.92;utter.volume=.9;
+      const voices=speechSynthesis.getVoices();
+      const faVoice=voices.find(v=>/^fa(-|_)/i.test(v.lang))||voices.find(v=>/persian|farsi/i.test(v.name));
+      if(faVoice)utter.voice=faVoice;
+      speechSynthesis.cancel();speechSynthesis.speak(utter);
+    }
+  }catch(e){}
+  bot.voiceCooldown=7+Math.random()*4;
+}
+function playFartSound(){
+  const ctx=ensureGameAudioContext();if(!ctx)return;
+  try{
+    const duration=.52,length=Math.floor(ctx.sampleRate*duration);
+    const buffer=ctx.createBuffer(1,length,ctx.sampleRate),data=buffer.getChannelData(0);
+    for(let i=0;i<length;i++){
+      const t=i/length;
+      const envelope=Math.pow(Math.sin(Math.PI*t),.7);
+      data[i]=(Math.random()*2-1)*envelope;
+    }
+    const source=ctx.createBufferSource();source.buffer=buffer;
+    const filter=ctx.createBiquadFilter();filter.type='lowpass';filter.frequency.setValueAtTime(420,ctx.currentTime);filter.frequency.exponentialRampToValueAtTime(95,ctx.currentTime+duration);
+    const gain=ctx.createGain();gain.gain.setValueAtTime(.0001,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(.25,ctx.currentTime+.045);gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+duration);
+    const wobble=ctx.createOscillator(),wobbleGain=ctx.createGain();wobble.type='sawtooth';wobble.frequency.setValueAtTime(95,ctx.currentTime);wobble.frequency.exponentialRampToValueAtTime(42,ctx.currentTime+duration);wobbleGain.gain.value=.045;
+    source.connect(filter);filter.connect(gain);gain.connect(ctx.destination);wobble.connect(wobbleGain);wobbleGain.connect(gain);
+    source.start();source.stop(ctx.currentTime+duration);wobble.start();wobble.stop(ctx.currentTime+duration);
+  }catch(e){}
+}
+function spawnFartPuff(bot){
+  const yaw=bot.mesh.rotation.y||0;
+  const back=new THREE.Vector3(0,0,.52).applyAxisAngle(new THREE.Vector3(0,1,0),yaw);
+  const group=new THREE.Group();group.position.set(bot.x+back.x,.85,bot.z+back.z);
+  const mat=new THREE.MeshBasicMaterial({color:0x8cd55b,transparent:true,opacity:.25,depthWrite:false});
+  for(let i=0;i<7;i++){
+    const puff=new THREE.Mesh(new THREE.SphereGeometry(.18+Math.random()*.18,8,7),mat.clone());
+    puff.position.set((Math.random()-.5)*.48,(Math.random()-.5)*.3,(Math.random()-.5)*.48);
+    group.add(puff);
+  }
+  scene.add(group);fartPuffs.push({group,life:1.25,maxLife:1.25,velocity:new THREE.Vector3(back.x*.65,.35,back.z*.65)});
+  playFartSound();
+}
+function spawnChemicalCloud(position){
+  const group=new THREE.Group();group.position.copy(position);
+  const cloudMaterials=[];
+  for(let i=0;i<12;i++){
+    const mat=new THREE.MeshBasicMaterial({color:i%3===0?0xb9f36b:0x71bd42,transparent:true,opacity:.22,depthWrite:false});
+    const puff=new THREE.Mesh(new THREE.SphereGeometry(.45+Math.random()*.48,10,8),mat);
+    puff.position.set((Math.random()-.5)*2.2,(Math.random()-.5)*1.0,(Math.random()-.5)*2.2);
+    group.add(puff);cloudMaterials.push(mat);
+  }
+  scene.add(group);
+  chemicalClouds.push({group,materials:cloudMaterials,life:4.2,maxLife:4.2,tick:0,radius:4.1});
+}
+function throwSepehrChemical(bot,target){
+  if(bot.chemicalThrowing||bot.chemicalCooldown>0)return;
+  bot.chemicalThrowing=true;bot.chemicalCooldown=11;
+  spawnFartPuff(bot);
+  showEnemySpeech(bot,'اینم گاز شیمیایی! فرار کن!');
+  const start=new THREE.Vector3(bot.x,1.55,bot.z);
+  const dest=new THREE.Vector3(target.x,.15,target.z);
+  const horizontal=Math.hypot(dest.x-start.x,dest.z-start.z);
+  const flight=clamp(horizontal/15,.48,1.15);
+  const velocity=new THREE.Vector3((dest.x-start.x)/flight,(dest.y-start.y+.5*9.8*flight*flight)/flight,(dest.z-start.z)/flight);
+  const mat=new THREE.MeshStandardMaterial({color:0x9de34c,emissive:0x4e9a1c,emissiveIntensity:.8,roughness:.3,metalness:.15});
+  const mesh=new THREE.Mesh(new THREE.SphereGeometry(.24,12,10),mat);
+  mesh.position.copy(start);scene.add(mesh);
+  const aura=new THREE.PointLight(0x9bdd48,1.7,3,2);mesh.add(aura);
+  chemicalProjectiles.push({mesh,velocity,age:0,flight,trail:[]});
+  bot.chemicalThrowing=false;
+}
+function updateChemicalEffects(dt){
+  for(let i=chemicalProjectiles.length-1;i>=0;i--){
+    const p=chemicalProjectiles[i];p.age+=dt;p.velocity.y-=9.8*dt;p.mesh.position.addScaledVector(p.velocity,dt);p.mesh.rotation.x+=dt*5;p.mesh.rotation.z+=dt*4;
+    if(p.mesh.position.y<=.18||p.age>=p.flight){
+      const at=p.mesh.position.clone();at.y=.2;scene.remove(p.mesh);p.mesh.geometry.dispose();p.mesh.material.dispose();spawnChemicalCloud(at);chemicalProjectiles.splice(i,1);
+    }
+  }
+  for(let i=fartPuffs.length-1;i>=0;i--){
+    const p=fartPuffs[i];p.life-=dt;p.group.position.addScaledVector(p.velocity,dt);p.group.scale.multiplyScalar(1+dt*.75);
+    for(const m of p.group.children)m.material.opacity=.25*clamp(p.life/p.maxLife,0,1);
+    if(p.life<=0){scene.remove(p.group);for(const m of p.group.children){m.geometry.dispose();m.material.dispose();}fartPuffs.splice(i,1);}
+  }
+  for(let i=chemicalClouds.length-1;i>=0;i--){
+    const c=chemicalClouds[i];c.life-=dt;c.tick+=dt;
+    const age=1-c.life/c.maxLife;c.group.scale.setScalar(.7+age*.55);
+    for(const mat of c.materials)mat.opacity=.22*clamp(c.life/1.1,0,1);
+    if(isLocalHostAuthority()&&c.tick>=.65){
+      c.tick=0;
+      for(const p of getPlayers())if(p.alive&&!p.hidden&&Math.hypot(p.x-c.group.position.x,p.z-c.group.position.z)<c.radius){
+        damagePlayer(p,5,'enemy','sepehr');
+        if(p===player)toast('☣️ داخل گاز شیمیایی هستی!');
+      }
+    }
+    if(c.life<=0){scene.remove(c.group);for(const m of c.materials)m.dispose();for(const child of c.group.children)child.geometry.dispose();chemicalClouds.splice(i,1);}
+  }
+  for(let i=muzzleFlashes.length-1;i>=0;i--){
+    const f=muzzleFlashes[i];f.life-=dt;f.group.scale.setScalar(.65+Math.random()*.5);f.light.intensity=clamp(f.life/f.maxLife,0,1)*f.maxIntensity;
+    if(f.life<=0){scene.remove(f.group);f.group.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});muzzleFlashes.splice(i,1);}
+  }
 }
 function damageEnemy(bot,amount,weaponId='pistol') {
   if(!bot?.alive||amount<=0)return;
@@ -1476,11 +1639,12 @@ function updateEnemyStatuses(dt) {
     if(!bot.alive){if(elapsed>=bot.respawnAt){bot.alive=true;bot.hp=bot.maxHp;bot.mesh.visible=true;bot.x=bot.homeX;bot.z=bot.homeZ;bot.mesh.position.set(bot.x,0,bot.z);drawEnemyHealth(bot.healthTag,bot.name,bot.hp,bot.maxHp);}continue;}
     if(bot.burnTimer>0){bot.burnTimer-=dt;bot.burnTick+=dt;if(bot.burnTick>=.5){bot.burnTick=0;bot.hp=Math.max(0,bot.hp-4);drawEnemyHealth(bot.healthTag,bot.name,bot.hp,bot.maxHp);if(bot.hp<=0){bot.alive=false;bot.mesh.visible=false;bot.respawnAt=elapsed+10;feed(`${bot.name} در آتش سوخت`);}}}
     if(bot.freezeTimer>0){bot.freezeTimer=Math.max(0,bot.freezeTimer-dt);bot.thawTimer=0;}else if(bot.thawTimer<2)bot.thawTimer=Math.min(2,bot.thawTimer+dt);
-    if(bot.mixer)bot.mixer.update(dt);
+    bot.voiceCooldown=Math.max(0,(bot.voiceCooldown||0)-dt);
+    bot.chemicalCooldown=Math.max(0,(bot.chemicalCooldown||0)-dt);
   }
 }
 function moveBot(bot,target,speed,dt) {
-  if(bot.stunT>0){bot.stunT-=dt;return Math.hypot(target.x-bot.x,target.z-bot.z);}
+  if(bot.stunT>0){bot.stunT-=dt;bot.isMoving=false;return Math.hypot(target.x-bot.x,target.z-bot.z);}
   aiTarget=target; computeField(target.x,target.z);
   const dx=target.x-bot.x,dz=target.z-bot.z;
   const dist=Math.max(.0001,Math.hypot(dx,dz));
@@ -1489,6 +1653,7 @@ function moveBot(bot,target,speed,dt) {
   const oldX=bot.x,oldZ=bot.z,p={x:bot.x+d.x*speed*dt,z:bot.z+d.z*speed*dt};
   resolveCollision(p,BOT_R);bot.x=p.x;bot.z=p.z;
   const moved=Math.hypot(bot.x-oldX,bot.z-oldZ);
+  bot.isMoving=moved>Math.max(.0002,speed*dt*.18);
   if(moved<speed*dt*.35){bot.stuckT+=dt;if(bot.stuckT>.4&&bot.stuckT<.45)bot.sideSign=Math.random()<.5?-1:1;}
   else bot.stuckT=Math.max(0,bot.stuckT-dt*1.5);
   bot.walkPhase+=dt*(4+speed*.8);
@@ -1678,7 +1843,8 @@ function updateHideAndAudio(dt) {
   if(notifNoiseTimer>0){notifNoiseTimer=Math.max(0,notifNoiseTimer-dt);player.voice=Math.max(player.voice,.25);}
   if(hideState?.type==='locker'&&hideState.doorPivot){hideState.doorPivot.rotation.y=THREE.MathUtils.damp(hideState.doorPivot.rotation.y,hideState.doorOpenTarget??0,8,dt);}
   if(online&&remotePlayer){const d=Math.hypot(player.x-remotePlayer.x,player.z-remotePlayer.z);const clear=hasLineOfSight(player,remotePlayer);const vol=clamp(1-d/48,.08,.9)*(clear?1:.28);$('remoteAudio').volume=vol;}
-  const tv=$('terminatorVideo');if(tv&&tv.readyState>=2&&enemies.find(e=>e.id==='sepehr')){const sepehr=enemies.find(e=>e.id==='sepehr');const d=Math.hypot(player.x-sepehr.x,player.z-sepehr.z);tv.volume=clamp(1-d/55,.06,.8);}
+  updateSepehrSpatialAudio();
+  const speech=$('speech');if(speechHideTimer<=0&&speech)speech.classList.remove('show');
 }
 /* ---------- HUD و میکروفن ---------- */
 async function requestMicrophone() {
@@ -2106,7 +2272,7 @@ function beginMatch(sendStart=true) {
   for(const p of pickups){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
   for(const p of [...drinkPickups,...energyPickups]){p.available=true;p.mesh.visible=true;p.respawnAt=0;}
   $('menu').classList.add('hidden');$('levelsScreen').classList.add('hidden');$('settingsScreen').classList.add('hidden');$('over').classList.add('hidden');$('pause').classList.add('hidden');$('phonePanel').classList.add('hidden');
-  const tv=$('terminatorVideo');if(tv){try{tv.volume=.3;const play=tv.play();if(play?.catch)play.catch(()=>{});}catch(e){}}
+  startSepehrMusic();
   $('timer').textContent=sandboxMode?'∞':'02:00';$('spectateMsg').textContent='';$('vignette').style.opacity=0;
   $('playerName').textContent=player.name;updateWeaponHud();
   if(sendStart&&online&&isHost)sendNet({type:'start',level:campaignLevel,gameMode,sandboxMode});
@@ -2279,6 +2445,12 @@ function updateBots(dt) {
     const freezeFactor=bot.freezeTimer>0?.12:bot.thawTimer<2?.12+.88*(bot.thawTimer/2):1;
     const speed=((bot.deadly?4.0:3.25)+Math.min(elapsed*.012,1.2)+(target.voice||0)*2.2+levelBoost)*freezeFactor;
     const dist=moveBot(bot,target,speed,dt);
+    if(bot.id==='sepehr'&&dist>6.5&&dist<24&&bot.chemicalCooldown<=0&&Math.random()<dt*1.4){
+      throwSepehrChemical(bot,target);
+    } else if(bot.voiceCooldown<=0&&dist<30){
+      const lines=bot.id==='rashidi'?['پیدات کردم!','فرار نکن!','صداتو می‌شنوم!','این‌طرفی!']:['کجایی؟','صداتو شنیدم!','بیا اینجا!','نمی‌تونی قایم شی!'];
+      showEnemySpeech(bot,lines[Math.floor(Math.random()*lines.length)]);
+    }
     if(target.hidden){
       const remoteIsHidden=target!==player;
       if(!remoteIsHidden&&hideState?.type==='locker'&&dist<3.1)hideState.doorOpenTarget=1.35;
@@ -2338,7 +2510,7 @@ function step(dt) {
   if(remotePlayer&&remoteAvatar)updateAvatar(remoteAvatar,remotePlayer,dt);
   for(const p of pickups)p.mesh.rotation.y+=dt*.8;
   for(const p of [...drinkPickups,...energyPickups])if(p.available)p.mesh.rotation.y+=dt*.8;
-  updateTracers(dt);
+  updateTracers(dt);updateChemicalEffects(dt);
   if(isLocalHostAuthority()){
     $('timer').textContent=sandboxMode?'∞':formatTime(Math.max(0,SURVIVE-elapsed));
     if(!sandboxMode&&elapsed>=SURVIVE){gameOver();return;}
