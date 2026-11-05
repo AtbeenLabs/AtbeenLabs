@@ -1884,7 +1884,7 @@ function spawnMuzzleFlash(position,direction,color){
   scene.add(group);muzzleFlashes.push({group,light,life:.075,maxLife:.075,maxIntensity:3.2});
 }
 function rayCapsuleHit(origin,direction,maxDistance,cx,cz,baseY,height,radius) {
-  const p1=origin,q1=origin.clone().addScaledVector(direction,maxDistance);
+  const p1=origin.clone(),q1=origin.clone().addScaledVector(direction,maxDistance);
   const p2=new THREE.Vector3(cx,baseY+.32,cz);
   const q2=new THREE.Vector3(cx,baseY+Math.max(.5,height-.30),cz);
   const d1=q1.clone().sub(p1),d2=q2.clone().sub(p2),r=p1.clone().sub(p2);
@@ -1931,7 +1931,7 @@ function serverShoot(shooter,weaponId) {
     const distance=bodyHit===null?headHit:(headHit===null?bodyHit:Math.min(bodyHit,headHit));
     if(distance===null||distance>=bestDistance||!hasLineOfSight(shooter,obj))continue;
     best=obj;bestDistance=distance;bestKind=candidate.kind;
-    bestHeadshot=headHit!==null&&headHit<=bodyHit;
+    bestHeadshot=headHit!==null&&(bodyHit===null||headHit<=bodyHit);
   }
   const end=muzzle.clone().addScaledVector(rayDir,best?bestDistance:w.range);
   addTracer(origin.x,origin.z,end.x,end.z,w.color,origin.y,end.y);
