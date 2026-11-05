@@ -368,6 +368,22 @@ import { FBXLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/
 import { OBJLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/OBJLoader.js';
 
 const $ = (id) => document.getElementById(id);
+function showRuntimeError(message){
+  console.error('[LastBell] runtime error:',message);
+  let panel=document.getElementById('runtimeErrorPanel');
+  if(!panel){
+    panel=document.createElement('div');panel.id='runtimeErrorPanel';
+    panel.style.cssText='position:fixed;z-index:99999;inset:12px 12px auto;padding:14px 16px;background:#280d16;color:#fff;border:1px solid #ff627d;border-radius:12px;font:14px/1.7 Tahoma,sans-serif;direction:rtl;white-space:pre-wrap;max-height:45vh;overflow:auto;box-shadow:0 8px 30px #0009';
+    document.body.appendChild(panel);
+  }
+  panel.textContent='خطای اجرای بازی:\n'+String(message).slice(0,1400)+'\n\nلطفاً از این بخش عکس بفرست.';
+}
+window.addEventListener('error',event=>{
+  if(event?.message)showRuntimeError(event.message+'\n'+(event.filename||'')+':'+(event.lineno||''));
+});
+window.addEventListener('unhandledrejection',event=>{
+  showRuntimeError(event?.reason?.stack||event?.reason?.message||event?.reason||'خطای Promise ناشناخته');
+});
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ============================================================
@@ -2437,13 +2453,15 @@ function prepareMapModel(model,season) {
   model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
   return model;
 }
-function collectMapColliders(model) {
+async function collectMapColliders(model) {
   model.updateMatrixWorld(true);
   mapSolidCells.fill(0);
   seasonMapColliders.length=0;
   const va=new THREE.Vector3(),vb=new THREE.Vector3(),vc=new THREE.Vector3();
   const ab=new THREE.Vector3(),ac=new THREE.Vector3(),normal=new THREE.Vector3();
-  let triangles=0,occupied=0;
+  let triangles=0,occupied=0,processed=0;
+  const meshes=[];
+  const yieldToBrowser=()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
 
   const segDistSq=(px,pz,ax,az,bx,bz)=>{
     const vx=bx-ax,vz=bz-az,len=vx*vx+vz*vz;
@@ -2465,7 +2483,6 @@ function collectMapColliders(model) {
     ab.subVectors(b,a);ac.subVectors(c,a);normal.crossVectors(ab,ac);
     const nl=normal.length();if(nl<1e-8)return;
     normal.multiplyScalar(1/nl);
-    // Ignore floors, ceilings, ramps and horizontal furniture surfaces.
     if(Math.abs(normal.y)>.68)return;
     const pad=.31,padSq=pad*pad;
     const minX=Math.min(a.x,b.x,c.x)-pad,maxX=Math.max(a.x,b.x,c.x)+pad;
@@ -2473,9 +2490,9 @@ function collectMapColliders(model) {
     if(maxX<GRID.minX||minX>GRID.maxX||maxZ<GRID.minZ||minZ>GRID.maxZ)return;
     const i0=clamp(cellX(minX),0,GRID.w-1),i1=clamp(cellX(maxX),0,GRID.w-1);
     const j0=clamp(cellZ(minZ),0,GRID.h-1),j1=clamp(cellZ(maxZ),0,GRID.h-1);
-    for(let j=j0;j<=j1;j++) {
+    for(let j=j0;j<=j1;j++){
       const pz=cellCZ(j);
-      for(let i=i0;i<=i1;i++) {
+      for(let i=i0;i<=i1;i++){
         const idx=j*GRID.w+i;if(mapSolidCells[idx])continue;
         const px=cellCX(i);
         const near=insideTri(px,pz,a,b,c)||
@@ -2488,21 +2505,24 @@ function collectMapColliders(model) {
     triangles++;
   };
 
-  model.traverse(o=>{
-    if(!o.isMesh||!o.geometry?.attributes?.position)return;
+  model.traverse(o=>{if(o.isMesh&&o.geometry?.attributes?.position)meshes.push(o);});
+  const total=meshes.reduce((n,m)=>n+Math.floor((m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3),0);
+  const batchSize=3000;
+
+  // Batch processing yields to rendering so large GLB files cannot lock the page.
+  for(const o of meshes){
     const name=(o.name||'').toLowerCase();
     if(/collider/i.test(name))o.visible=false;
     const box=new THREE.Box3().setFromObject(o),size=box.getSize(new THREE.Vector3());
     const tagged=/(collider|wall|obstacle|solid|desk|table|locker|cabinet|pillar|column)/i.test(name);
-    // Only small named objects become boxes; big merged GLB meshes are rasterized.
-    if(tagged&&size.y>.25&&size.x<24&&size.z<24&&size.x>.12&&size.z>.12) {
+    if(tagged&&size.y>.25&&size.x<24&&size.z<24&&size.x>.12&&size.z>.12){
       const center=box.getCenter(new THREE.Vector3());
       const col={x:center.x,z:center.z,w:size.x,d:size.z};
       WALLS.push(col);seasonMapColliders.push(col);
     }
     const pos=o.geometry.attributes.position,index=o.geometry.index;
     const count=index?index.count:pos.count,triCount=Math.floor(count/3);
-    for(let t=0;t<triCount;t++) {
+    for(let t=0;t<triCount;t++){
       const ia=index?index.getX(t*3):t*3;
       const ib=index?index.getX(t*3+1):t*3+1;
       const ic=index?index.getX(t*3+2):t*3+2;
@@ -2510,8 +2530,15 @@ function collectMapColliders(model) {
       vb.fromBufferAttribute(pos,ib).applyMatrix4(o.matrixWorld);
       vc.fromBufferAttribute(pos,ic).applyMatrix4(o.matrixWorld);
       markTriangle(va,vb,vc);
+      processed++;
+      if(processed%batchSize===0){
+        const ratio=processed/Math.max(1,total);
+        const progress=Math.min(.98,.90+.08*ratio);
+        setAssetLoading(true,'ساخت کالیژن نقشه… '+Math.round(progress*100)+'٪',progress);
+        await yieldToBrowser();
+      }
     }
-  });
+  }
   mapCollisionEnabled=occupied>0;
   console.info('[LastBell] map collision baked:',triangles,'vertical triangles,',occupied,'solid cells');
   return occupied;
@@ -2540,7 +2567,7 @@ async function loadSeasonMap(season){
         prepareMapModel(model,season);
         defaultMapGroup.visible=false;hideablesGroup.visible=true;
         WALLS.push(...hideableColliders);
-        const count=collectMapColliders(model);
+        const count=await collectMapColliders(model);
         seasonMapGroup.add(model);
         console.info(`[LastBell] نقشه فصل ${season} بارگذاری شد؛ ${count} برخورد`);
       }catch(error){
