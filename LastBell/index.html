@@ -46,8 +46,9 @@
   #crosshair {
     position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
     border-radius: 50%; background: rgba(255,255,255,.55); box-shadow: 0 0 6px #000;
-    pointer-events: none;
+    pointer-events: none; transition: width .12s,height .12s,margin .12s,background .12s;
   }
+  #crosshair.aiming { width:4px; height:4px; margin:-2px 0 0 -2px; background:#fff; box-shadow:0 0 9px #8edcff; }
   #vignette {
     position: fixed; inset: 0; pointer-events: none; opacity: 0;
     box-shadow: inset 0 0 180px 50px rgba(255,20,60,.95);
@@ -236,6 +237,7 @@
   </div>
   <div id="actionPad">
     <button id="touchFire" class="action fire">FIRE</button>
+    <button id="touchAim" class="action">🎯 نشانه</button>
     <button id="touchJump" class="action">پرش</button>
     <button id="touchReload" class="action">خشاب</button>
     <button id="touchPickup" class="action">بردار</button>
@@ -314,7 +316,7 @@
     <input id="sensitivityRange" type="range" min="0.5" max="2.5" step="0.1" value="1">
     <label class="fieldLabel">میدان دید</label>
     <input id="fovRange" type="range" min="55" max="100" step="1" value="76">
-    <label class="fieldLabel">کنترل</label><p>WASD حرکت · ماوس نگاه · کلیک شلیک · E تعامل · M ویس · F هل‌دادن · C مخفی‌شدن زیر میز · V تغییر دید</p>
+    <label class="fieldLabel">کنترل</label><p>WASD حرکت · ماوس نگاه · کلیک چپ شلیک · کلیک راست نگه‌داشتن برای نشانه‌گیری · E تعامل · M ویس · F هل‌دادن · C مخفی‌شدن زیر میز · V تغییر دید</p>
     <div class="row"><button class="btn primary" id="saveSettingsBtn">ذخیره</button><button class="btn" id="settingsBackBtn">بازگشت</button></div>
   </div>
 </div>
@@ -1116,6 +1118,7 @@ let lastHudRefresh = 0;
 let toastTimer = 0;
 let lastSpectateText = '';
 let firstPerson = false;
+let aiming = false;
 let lastKnownRemoteId = '';
 let pickups = [];
 let tracers = [];
@@ -1133,7 +1136,7 @@ dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5
 gltfLoader.setDRACOLoader(dracoLoader);
 gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 const assetLoaders = { gltf:gltfLoader, fbx:new FBXLoader(), obj:new OBJLoader() };
-const weaponTemplates={};let seasonMapGroup=new THREE.Group();scene.add(seasonMapGroup);let loadedMapSeason=0;const seasonMapColliders=[];
+const weaponTemplates={};let weaponAssetVersion=0;let seasonMapGroup=new THREE.Group();scene.add(seasonMapGroup);let loadedMapSeason=0;const seasonMapColliders=[];
 const CUSTOM_ASSETS = {
   player:['./assets/characters/player.glb','./assets/characters/player.gltf','./assets/characters/player.fbx','./assets/characters/player.obj'],
   student:['./assets/characters/student.glb','./assets/characters/student.gltf','./assets/characters/student.fbx','./assets/characters/student.obj'],
@@ -1240,8 +1243,12 @@ function updateAvatar(view,p,dt=1/60) {
   drawPlayerLabel(view,p);
   view.gun.visible=!!p.weapon;
   const current=p.weapon||'pistol';
-  if(view.gun.userData.weapon!==current) {
-    view.gun.clear(); view.gun.add(makeGunVisual(current,.5)); view.gun.userData.weapon=current;
+  if(view.gun.userData.weapon!==current || view.gun.userData.assetVersion!==weaponAssetVersion) {
+    view.gun.clear();
+    const held=makeGunVisual(current,.5);
+    view.gun.add(held);
+    view.gun.userData.weapon=current;
+    view.gun.userData.assetVersion=weaponAssetVersion;
   }
 }
 let localAvatar=makeAvatar(player.color,player.character);
@@ -1266,9 +1273,18 @@ function makeGunVisual(id,scale=1) {
   group.scale.setScalar(scale); return group;
 }
 const firstPersonGun=new THREE.Group();firstPersonGun.position.set(.34,-.28,-.72);firstPersonGun.rotation.set(0,0,0);camera.add(firstPersonGun);
-function updateFirstPersonGun(){const id=player.weapon||'pistol';if(firstPersonGun.userData.weapon!==id){firstPersonGun.clear();firstPersonGun.add(makeGunVisual(id,.78));firstPersonGun.userData.weapon=id;}firstPersonGun.visible=firstPerson&&player.alive&&!player.hidden;}
+function updateFirstPersonGun(){
+  const id=player.weapon||'pistol';
+  if(firstPersonGun.userData.weapon!==id||firstPersonGun.userData.assetVersion!==weaponAssetVersion){
+    firstPersonGun.clear();firstPersonGun.add(makeGunVisual(id,.78));
+    firstPersonGun.userData.weapon=id;firstPersonGun.userData.assetVersion=weaponAssetVersion;
+  }
+  firstPersonGun.position.set(aiming?.045:.34,aiming?-.22:-.28,aiming?-.62:-.72);
+  firstPersonGun.scale.setScalar(aiming?.9:1);
+  firstPersonGun.visible=firstPerson&&player.alive&&!player.hidden;
+}
 function createPickup(id,type,x,z) {
-  const root=new THREE.Group(); root.add(makeGunVisual(type,.72));
+  const root=new THREE.Group(); const fallback=makeGunVisual(type,.72);fallback.userData.fallbackWeapon=true;root.add(fallback);
   const ring=new THREE.Mesh(new THREE.TorusGeometry(.7,.045,7,24),new THREE.MeshBasicMaterial({color:WEAPONS[type].color}));
   ring.rotation.x=Math.PI/2; ring.position.y=.15; root.add(ring);
   const glow=new THREE.PointLight(WEAPONS[type].color,4,5,2); glow.position.y=.8; root.add(glow);
@@ -1299,8 +1315,8 @@ function initConsumables() {
   loadFirstModel(CUSTOM_ASSETS.drink).then(model=>{if(!model)return;drinkTemplate=normalizeModel(model,.8);for(const item of [...drinkPickups,...energyPickups]){item.mesh.children[0].visible=false;item.mesh.add(drinkTemplate.clone());}});
 }
 initConsumables();
-function addTracer(x1,z1,x2,z2,color=0xffe39b) {
-  const a=new THREE.Vector3(x1,1.25,z1), b=new THREE.Vector3(x2,1.2,z2);
+function addTracer(x1,z1,x2,z2,color=0xffe39b,y1=1.25,y2=1.2) {
+  const a=new THREE.Vector3(x1,y1,z1), b=new THREE.Vector3(x2,y2,z2);
   const geo=new THREE.BufferGeometry().setFromPoints([a,b]);
   const mat=new THREE.LineBasicMaterial({color,transparent:true,opacity:.9});
   const line=new THREE.Line(geo,mat); scene.add(line); tracers.push({line,life:.13,max:.13});
@@ -1328,10 +1344,52 @@ function normalizeModel(model,height=2.4) {
   model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;if(o.material){o.material.roughness=Math.min(o.material.roughness??.8,.78);}}});
   return model;
 }
+// Character assets often arrive with Z-up or X-up, or with their face toward +Z.
+// Convert them to the game's Y-up / forward -Z convention before fitting.
+function prepareCharacterModel(model,height=2.35) {
+  model.updateMatrixWorld(true);
+  let box=new THREE.Box3().setFromObject(model);
+  const s=box.getSize(new THREE.Vector3());
+  if(s.z>s.y*1.18 && s.z>s.x*1.12) model.rotation.x-=Math.PI/2;
+  else if(s.x>s.y*1.18 && s.x>s.z*1.12) model.rotation.z+=Math.PI/2;
+  model.rotation.y+=Math.PI;
+  model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  const size=box.getSize(new THREE.Vector3());
+  const scale=height/Math.max(size.y,.001);
+  model.scale.multiplyScalar(scale);
+  model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  const center=box.getCenter(new THREE.Vector3());
+  model.position.x-=center.x; model.position.z-=center.z; model.position.y-=box.min.y;
+  model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;if(o.material){const mats=Array.isArray(o.material)?o.material:[o.material];for(const m of mats){if(m.roughness!==undefined)m.roughness=Math.min(m.roughness,.82);}}}});
+  model.updateMatrixWorld(true);
+  return model;
+}
+// Weapon models use the longest geometric axis as the barrel direction and are centered
+// around the hand pivot, rather than incorrectly scaling by model height.
+function prepareWeaponModel(model) {
+  model.updateMatrixWorld(true);
+  const b0=new THREE.Box3().setFromObject(model),s0=b0.getSize(new THREE.Vector3());
+  if(s0.x>=s0.y&&s0.x>=s0.z) model.rotation.y+=Math.PI/2;
+  else if(s0.y>=s0.x&&s0.y>=s0.z) model.rotation.x-=Math.PI/2;
+  else model.rotation.y+=Math.PI;
+  model.updateMatrixWorld(true);
+  let box=new THREE.Box3().setFromObject(model);
+  const size=box.getSize(new THREE.Vector3()),length=Math.max(size.x,size.y,size.z,.001);
+  model.scale.multiplyScalar(.92/length);
+  model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  const center=box.getCenter(new THREE.Vector3());
+  model.position.x-=center.x; model.position.y-=center.y; model.position.z-=center.z;
+  model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+  model.updateMatrixWorld(true);
+  return model;
+}
 async function applyAvatarAsset(view,character='student') {
   const model=await loadFirstModel(CUSTOM_ASSETS[character]||[])||await loadFirstModel(CUSTOM_ASSETS.player);if(!model||!view)return;
   view.root.children.forEach(c=>{if(c!==view.label&&c!==view.gun)c.visible=false;});
-  normalizeModel(model,2.35);view.root.add(model);
+  prepareCharacterModel(model,2.35);view.root.add(model);
   const clips=model.animations||model.userData.animations||[];
   if(clips.length){
     view.mixer=new THREE.AnimationMixer(model);view.actions={};
@@ -1395,7 +1453,7 @@ function makeMonsters() {
     if(!model)return;
     const tag=bot.healthTag;
     bot.mesh.children.forEach(c=>{if(c!==tag)c.visible=false;});
-    normalizeModel(model,2.55);bot.mesh.add(model);
+    prepareCharacterModel(model,2.55);bot.mesh.add(model);
     const clips=model.animations||model.userData.animations||[];if(clips.length){bot.mixer=new THREE.AnimationMixer(model);bot.mixer.clipAction(clips[0]).play();}
   });
 }
@@ -1494,24 +1552,33 @@ function serverShoot(shooter,weaponId) {
   if(!w||!ammo||ammo.ammo<=0||!shooter.alive)return;
   if(elapsed-shooter.lastShot<w.rate*.82)return;
   shooter.lastShot=elapsed;ammo.ammo--;
-  const dirx=-Math.sin(shooter.yaw),dirz=-Math.cos(shooter.yaw);
-  let best=null,bestDot=Infinity,bestKind='';
+  const yaw=shooter.yaw||0,pitch=clamp(shooter.pitch||0,-.7,.7),cp=Math.cos(pitch);
+  const origin={x:shooter.x,y:(shooter.y||0)+1.48,z:shooter.z};
+  const dir={x:-Math.sin(yaw)*cp,y:Math.sin(pitch),z:-Math.cos(yaw)*cp};
+  let best=null,bestDot=Infinity,bestKind='',bestY=origin.y;
   const candidates=[...enemies.filter(e=>e.alive).map(e=>({obj:e,kind:'enemy',radius:weaponId==='shotgun'?1.05:.82})),...getPlayers().filter(p=>p.id!==shooter.id&&p.alive&&!p.hidden).map(p=>({obj:p,kind:'player',radius:weaponId==='shotgun'?1.05:.72}))];
   for(const c of candidates){
-    const dx=c.obj.x-shooter.x,dz=c.obj.z-shooter.z;
-    const dot=dx*dirx+dz*dirz,perp=Math.abs(dx*dirz-dz*dirx);
-    const radius=c.radius+dot*.006;
-    if(dot>.45&&dot<w.range&&perp<radius&&dot<bestDot&&hasLineOfSight(shooter,c.obj)){best=c.obj;bestDot=dot;bestKind=c.kind;}
+    const targetY=(c.obj.y||0)+(c.kind==='enemy'?1.28:1.05);
+    const vx=c.obj.x-origin.x,vy=targetY-origin.y,vz=c.obj.z-origin.z;
+    const along=vx*dir.x+vy*dir.y+vz*dir.z;
+    const lenSq=vx*vx+vy*vy+vz*vz;
+    const perp=Math.sqrt(Math.max(0,lenSq-along*along));
+    const radius=c.radius+along*.006;
+    if(along>.45&&along<w.range&&perp<radius&&along<bestDot&&hasLineOfSight(shooter,c.obj)){
+      best=c.obj;bestDot=along;bestKind=c.kind;bestY=targetY;
+    }
   }
-  const endX=best?best.x:shooter.x+dirx*w.range,endZ=best?best.z:shooter.z+dirz*w.range;
-  addTracer(shooter.x,shooter.z,endX,endZ,w.color);
+  const endX=best?best.x:origin.x+dir.x*w.range;
+  const endY=best?bestY:origin.y+dir.y*w.range;
+  const endZ=best?best.z:origin.z+dir.z*w.range;
+  addTracer(origin.x,origin.z,endX,endZ,w.color,origin.y,endY);
   if(best){
     let dmg=w.damage;
     if(weaponId==='shotgun')dmg=Math.max(18,w.damage*(1-bestDot/w.range*.45));
     if(bestKind==='enemy'){damageEnemy(best,dmg,weaponId);toast(`${best.name} · ${Math.round(dmg)} آسیب`);}
     else {damagePlayer(best,dmg,'player',shooter.id);toast(`-${Math.round(dmg)} HP`);}
   }
-  if(online&&isHost)sendNet({type:'fx',x1:shooter.x,z1:shooter.z,x2:endX,z2:endZ,color:w.color});
+  if(online&&isHost)sendNet({type:'fx',x1:origin.x,y1:origin.y,z1:origin.z,x2:endX,y2:endY,z2:endZ,color:w.color});
 }
 function shoot() {
   if(state!=='play'||!player.alive)return;
@@ -1764,7 +1831,7 @@ function handleNetworkMessage(m) {
   if(m.type==='welcome'&&!isHost){ensureRemote(m.host);roomName=m.roomName||'زنگ آخر';gameMode=m.gameMode||'sandbox';sandboxMode=!!m.sandboxMode;campaignLevel=m.campaignLevel||1;status(`به اتاق «${roomName}» وصل شدی؛ منتظر شروع میزبان باش.`,'ok');return;}
   if(m.type==='start'&&!isHost){campaignLevel=m.level||campaignLevel;gameMode=m.gameMode||gameMode;sandboxMode=!!m.sandboxMode;beginMatch(false);return;}
   if(m.type==='input'&&isHost&&remotePlayer){
-    const wasHidden=!!remotePlayer.hidden;Object.assign(remotePlayer,{x:clamp(m.p.x,-58,58),z:clamp(m.p.z,-48,48),yaw:m.p.yaw||0,voice:m.p.voice||0,stamina:m.p.stamina||0,moving:!!m.p.moving,sprinting:!!m.p.sprinting,walkPhase:m.p.walkPhase||remotePlayer.walkPhase,hidden:!!m.p.hidden});
+    const wasHidden=!!remotePlayer.hidden;Object.assign(remotePlayer,{x:clamp(m.p.x,-58,58),z:clamp(m.p.z,-48,48),yaw:m.p.yaw||0,pitch:clamp(m.p.pitch||0,-.7,.7),voice:m.p.voice||0,stamina:m.p.stamina||0,moving:!!m.p.moving,sprinting:!!m.p.sprinting,walkPhase:m.p.walkPhase||remotePlayer.walkPhase,hidden:!!m.p.hidden});
     if(!wasHidden&&remotePlayer.hidden){for(const bot of enemies){if(bot.alive&&Math.hypot(bot.x-remotePlayer.x,bot.z-remotePlayer.z)<12&&hasLineOfSight(bot,remotePlayer)){bot.alertedHide=true;bot.hideTargetId=remotePlayer.id;}}}
     if(wasHidden&&!remotePlayer.hidden){for(const bot of enemies)if(bot.hideTargetId===remotePlayer.id){bot.alertedHide=false;bot.hideTargetId='';}}
     return;
@@ -1775,7 +1842,7 @@ function handleNetworkMessage(m) {
   if(m.type==='push'&&isHost&&remotePlayer){const old=player;remotePlayer.stamina=Math.min(100,(remotePlayer.stamina||0)+40);player=remotePlayer;pushEnemies();player=old;return;}
   if(m.type==='chat'){showIncomingMessage(m.message||'');return;}
   if(m.type==='select'&&isHost&&remotePlayer){if(remotePlayer.inventory[m.id])remotePlayer.weapon=m.id;return;}
-  if(m.type==='fx'&&!isHost){addTracer(m.x1,m.z1,m.x2,m.z2,m.color||0xffffff);return;}
+  if(m.type==='fx'&&!isHost){addTracer(m.x1,m.z1,m.x2,m.z2,m.color||0xffffff,m.y1??1.25,m.y2??1.2);return;}
   if(m.type==='pushFx'&&!isHost){feed('ضربه وارد شد');return;}
   if(m.type==='snapshot'&&!isHost){applySnapshot(m);return;}
   if(m.type==='end'&&!isHost){finishMatch(m);return;}
@@ -1796,13 +1863,13 @@ function applySnapshot(m) {
 function sendLocalInput(dt) {
   if(!online||isHost||!conn?.open)return;
   networkSendTimer+=dt;
-  if(networkSendTimer>=.05){networkSendTimer=0;sendNet({type:'input',p:{x:player.x,z:player.z,yaw:player.yaw,voice:player.voice,stamina:player.stamina,moving:player.moving,sprinting:player.sprinting,walkPhase:player.walkPhase,hidden:player.hidden}});}
+  if(networkSendTimer>=.05){networkSendTimer=0;sendNet({type:'input',p:{x:player.x,z:player.z,yaw:player.yaw,pitch:player.pitch,voice:player.voice,stamina:player.stamina,moving:player.moving,sprinting:player.sprinting,walkPhase:player.walkPhase,hidden:player.hidden}});}
 }
 function hostSnapshot(dt) {
   if(!online||!isHost||!conn?.open||state!=='play')return;
   snapshotTimer+=dt;
   if(snapshotTimer<.05)return;snapshotTimer=0;
-  const serialize=p=>({id:p.id,name:p.name,color:p.color,character:p.character,x:p.x,z:p.z,yaw:p.yaw,hp:p.hp,alive:p.alive,kills:p.kills,deaths:p.deaths,voice:p.voice,moving:p.moving,walkPhase:p.walkPhase,sprinting:p.sprinting,hidden:p.hidden,weapon:p.weapon,inventory:p.inventory,deadUntil:p.deadUntil,killerType:p.killerType,killerId:p.killerId});
+  const serialize=p=>({id:p.id,name:p.name,color:p.color,character:p.character,x:p.x,z:p.z,yaw:p.yaw,pitch:p.pitch,hp:p.hp,alive:p.alive,kills:p.kills,deaths:p.deaths,voice:p.voice,moving:p.moving,walkPhase:p.walkPhase,sprinting:p.sprinting,hidden:p.hidden,weapon:p.weapon,inventory:p.inventory,deadUntil:p.deadUntil,killerType:p.killerType,killerId:p.killerId});
   sendNet({type:'snapshot',elapsed,started:true,players:getPlayers().map(serialize),enemies:enemies.map(e=>({id:e.id,x:e.x,z:e.z,yaw:e.mesh.rotation.y,hp:e.hp,alive:e.alive})),pickups:pickups.map(p=>({id:p.id,available:p.available,respawnAt:p.respawnAt}))});
 }
 async function createHostRoom() {
@@ -1910,25 +1977,92 @@ async function joinRoom() {
   }
 }
 async function loadWeaponTemplates(){
-  for(const id of Object.keys(WEAPONS)){const paths=[`./assets/weapons/${id}.glb`,`./assets/weapons/${id}.gltf`,`./assets/weapons/${id}.fbx`,`./assets/weapons/${id}.obj`];const model=await loadFirstModel(paths);if(model){weaponTemplates[id]=normalizeModel(model,.8);for(const p of pickups){if(p.type===id){const old=p.mesh.children[0];if(old)old.visible=false;p.mesh.add(weaponTemplates[id].clone());}}}}
+  for(const id of Object.keys(WEAPONS)){
+    const paths=[`./assets/weapons/${id}.glb`,`./assets/weapons/${id}.gltf`,`./assets/weapons/${id}.fbx`,`./assets/weapons/${id}.obj`];
+    const model=await loadFirstModel(paths);
+    if(!model)continue;
+    weaponTemplates[id]=prepareWeaponModel(model);
+    weaponAssetVersion++;
+    for(const p of pickups){
+      if(p.type!==id)continue;
+      const old=p.mesh.children.find(c=>c.userData?.fallbackWeapon===true);
+      if(old)old.visible=false;
+      const visual=makeGunVisual(id,.72);
+      p.mesh.add(visual);
+    }
+  }
 }
 loadWeaponTemplates();
+function prepareMapModel(model,season) {
+  model.updateMatrixWorld(true);
+  let box=new THREE.Box3().setFromObject(model);
+  let size=box.getSize(new THREE.Vector3());
+  // Detect uncommon Z-up / X-up exports, while leaving standard glTF Y-up maps untouched.
+  if(size.z>0.001 && size.z<Math.min(size.x,size.y)*.35) model.rotation.x-=Math.PI/2;
+  else if(size.x>0.001 && size.x<Math.min(size.y,size.z)*.35) model.rotation.z+=Math.PI/2;
+  model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  size=box.getSize(new THREE.Vector3());
+  if(!Number.isFinite(size.x)||!Number.isFinite(size.z)||size.x<.001||size.z<.001) throw new Error('ابعاد نقشه قابل تشخیص نیست');
+  const targetW=YARD_BX*1.82,targetD=YARD_BZ*1.82;
+  const fit=clamp(Math.min(targetW/size.x,targetD/size.z),.0005,20);
+  model.scale.multiplyScalar(fit);
+  model.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(model);
+  const center=box.getCenter(new THREE.Vector3());
+  model.position.x-=center.x;
+  model.position.y-=box.min.y;
+  model.position.z-=center.z;
+  model.updateMatrixWorld(true);
+  model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+  return model;
+}
+function collectMapColliders(model) {
+  let count=0;
+  model.traverse(o=>{
+    if(!o.isMesh)return;
+    const name=(o.name||'').toLowerCase();
+    const explicit=/(collider|wall|obstacle|solid|desk|table|locker|cabinet|pillar|column)/i.test(name);
+    const colliderOnly=/collider/i.test(name);
+    const floorLike=/(floor|ground|terrain|ceiling|roof|plane)/i.test(name)&&!/(wall|obstacle|solid)/i.test(name);
+    const box=new THREE.Box3().setFromObject(o);
+    const size=box.getSize(new THREE.Vector3());
+    if(colliderOnly)o.visible=false;
+    if(floorLike||size.y<.65||size.x<.12||size.z<.12||size.x>150||size.z>150)return;
+    const namedWall=explicit&&size.x<150&&size.z<150;
+    const smallProp=!explicit&&size.y>.8&&size.x<18&&size.z<18;
+    const thinWall=!explicit&&size.y>1.3&&((size.x<1.7&&size.z<55)||(size.z<1.7&&size.x<55));
+    if(!namedWall&&!smallProp&&!thinWall)return;
+    const center=box.getCenter(new THREE.Vector3());
+    const c={x:center.x,z:center.z,w:size.x,d:size.z};
+    WALLS.push(c);seasonMapColliders.push(c);count++;
+  });
+  return count;
+}
 async function loadSeasonMap(season){
   if(loadedMapSeason===season)return;
   while(seasonMapGroup.children.length){seasonMapGroup.remove(seasonMapGroup.children[0]);}
   seasonMapColliders.length=0;
   const paths=[`./assets/maps/season${season}.glb`,`./assets/maps/season${season}.gltf`,`./assets/maps/season${season}.fbx`,`./assets/maps/season${season}.obj`];
-  // Friendly aliases for the two supplied map files: school = season 1, map = season 2.
   if(season===1)paths.push('./assets/maps/school.glb');
   if(season===2)paths.push('./assets/maps/map.glb');
   const model=await loadFirstModel(paths);
   WALLS.length=0;
   if(model){
-    defaultMapGroup.visible=false;hideablesGroup.visible=true;
-    model.position.y=0;model.updateMatrixWorld(true);
-    model.traverse(o=>{if(!o.isMesh||!/(collider|wall|obstacle|solid)/i.test(o.name))return;const box=new THREE.Box3().setFromObject(o),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());if(/collider/i.test(o.name))o.visible=false;if(size.x>.1&&size.z>.1&&size.x<100&&size.z<100){const c={x:center.x,z:center.z,w:size.x,d:size.z};WALLS.push(c);seasonMapColliders.push(c);}});
-    WALLS.push(...hideableColliders);seasonMapGroup.add(model);
-  } else {
+    try{
+      prepareMapModel(model,season);
+      defaultMapGroup.visible=false;hideablesGroup.visible=true;
+      const count=collectMapColliders(model);
+      WALLS.push(...hideableColliders);
+      seasonMapGroup.add(model);
+      console.info(`[LastBell] نقشه فصل ${season} بارگذاری شد؛ ${count} برخورد`);
+    }catch(error){
+      console.error('[LastBell] Map setup failed:',error);
+      defaultMapGroup.visible=true;WALLS.push(...defaultMapColliders,...hideableColliders);
+      seasonMapGroup.clear();
+    }
+  }else{
+    console.error(`[LastBell] Map model not found for season ${season}; using built-in school.`);
     defaultMapGroup.visible=true;WALLS.push(...defaultMapColliders,...hideableColliders);
   }
   rebuildNavGrid();loadedMapSeason=season;
@@ -2007,8 +2141,15 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyF'&&!e.repeat){if(online&&!isHost){if(pushCooldown<=0&&player.stamina>=40){player.stamina-=40;pushCooldown=30;sendNet({type:'push'});}}else pushEnemies();}
   if(e.code==='KeyC'&&!e.repeat){if(hideState)exitHide();else{const spot=deskSpots.map(x=>({...x,d:Math.hypot(player.x-x.x,player.z-x.z)})).sort((a,b)=>a.d-b.d)[0];if(spot&&spot.d<2.7)enterHide({type:'desk',x:spot.x,z:spot.z});else toast('برای قایم‌شدن زیر میز، نزدیک یک میز شو');}}
   if(e.code==='KeyP'&&!e.repeat)togglePhone();});
-addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());
+addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>{keys.clear();setAiming(false);});
 function toggleView(){firstPerson=!firstPerson;$('viewBtn').textContent=firstPerson?'👁 نمای اول‌شخص':'👁 نمای سوم‌شخص';}
+function setAiming(value){
+  aiming=!!value&&state==='play';
+  $('touchAim')?.classList.toggle('aiming',aiming);
+  if($('touchAim'))$('touchAim').textContent=aiming?'🎯 نشانه فعال':'🎯 نشانه';
+  $('crosshair')?.classList.toggle('aiming',aiming);
+  updateFirstPersonGun();
+}
 addEventListener('keydown',e=>{if(e.code==='KeyV'&&!e.repeat&&state==='play')toggleView();});
 // کنترل لمسی موبایل: دکمه‌های حرکت، شلیک و چرخاندن دوربین
 for(const b of document.querySelectorAll('[data-key]')){
@@ -2018,6 +2159,9 @@ for(const b of document.querySelectorAll('[data-key]')){
 }
 $('touchFire').addEventListener('pointerdown',e=>{e.preventDefault();fireHeld=true;shoot();});
 $('touchFire').addEventListener('pointerup',()=>fireHeld=false);$('touchFire').addEventListener('pointercancel',()=>fireHeld=false);
+$('touchAim').addEventListener('pointerdown',e=>{e.preventDefault();setAiming(true);$('touchAim').setPointerCapture?.(e.pointerId);});
+const releaseAim=()=>setAiming(false);
+$('touchAim').addEventListener('pointerup',releaseAim);$('touchAim').addEventListener('pointercancel',releaseAim);$('touchAim').addEventListener('lostpointercapture',releaseAim);
 $('touchHide').addEventListener('pointerdown',e=>{e.preventDefault();if(hideState)exitHide();else{const spot=deskSpots.map(x=>({...x,d:Math.hypot(player.x-x.x,player.z-x.z)})).sort((a,b)=>a.d-b.d)[0];if(spot&&spot.d<2.7)enterHide({type:'desk',x:spot.x,z:spot.z});else {const locker=hideSpots.find(x=>Math.hypot(player.x-x.x,player.z-x.z)<2.2);if(locker)enterHide(locker);}}});
 $('touchPush').addEventListener('pointerdown',e=>{e.preventDefault();if(online&&!isHost)sendNet({type:'push'});else pushEnemies();});
 $('touchJump').addEventListener('pointerdown',e=>{e.preventDefault();keys.add('Space');});
@@ -2036,8 +2180,13 @@ renderer.domElement.addEventListener('touchend',endLook);renderer.domElement.add
 
 addEventListener('contextmenu',e=>e.preventDefault());
 addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement||state!=='play')return;player.yaw-=e.movementX*.0023*cameraSensitivity;player.pitch=clamp(player.pitch-e.movementY*.0015*cameraSensitivity,-.7,.7);});
-addEventListener('mousedown',e=>{if(e.button!==0||state!=='play')return;if(document.pointerLockElement!==renderer.domElement){requestPointer();return;}fireHeld=true;shoot();});
-addEventListener('mouseup',e=>{if(e.button===0)fireHeld=false;});
+addEventListener('mousedown',e=>{
+  if(e.button===2){setAiming(true);return;}
+  if(e.button!==0||state!=='play')return;
+  if(document.pointerLockElement!==renderer.domElement){requestPointer();return;}
+  fireHeld=true;shoot();
+});
+addEventListener('mouseup',e=>{if(e.button===0)fireHeld=false;if(e.button===2)setAiming(false);});
 function switchWeapon(index) {
   const current=WEAPON_ORDER.indexOf(player.weapon);let target=index;
   if(index<0)target=(current+WEAPON_ORDER.length-1)%WEAPON_ORDER.length;
@@ -2096,6 +2245,10 @@ function updateCamera(dt) {
       camera.lookAt(look);
     }
   }
+  const seasonalFov=currentSeason>=3?Math.max(56,baseFov-(campaignLevel-20)*1.05):baseFov;
+  const wantedFov=aiming?Math.max(42,seasonalFov*.68):seasonalFov;
+  const smoothedFov=THREE.MathUtils.damp(camera.fov,wantedFov,10,dt);
+  if(Math.abs(camera.fov-smoothedFov)>.08){camera.fov=smoothedFov;camera.updateProjectionMatrix();}
   if(localAvatar?.root)localAvatar.root.visible=!!player.alive&&!firstPerson&&!player.hidden;updateFirstPersonGun();
 }
 function hasLineOfSight(a,b) {
