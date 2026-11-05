@@ -225,7 +225,7 @@
 <div id="toast"></div>
 <audio id="remoteAudio" autoplay playsinline></audio>
 <audio id="sepehrAudio" preload="auto" src="./assets/audio/sepehr.mp3"></audio>
-<video id="terminatorVideo" preload="auto" loop playsinline style="display:none" src="./assets/audio/terminator.mp4"></video>
+<audio id="terminatorVideo" preload="auto" loop style="display:none" src="./assets/audio/terminator.mp3"></audio>
 <audio id="notificationAudio" preload="auto"></audio>
 <div id="mobileControls">
   <div id="joyPad">
@@ -1911,6 +1911,9 @@ async function loadSeasonMap(season){
   while(seasonMapGroup.children.length){seasonMapGroup.remove(seasonMapGroup.children[0]);}
   seasonMapColliders.length=0;
   const paths=[`./assets/maps/season${season}.glb`,`./assets/maps/season${season}.gltf`,`./assets/maps/season${season}.fbx`,`./assets/maps/season${season}.obj`];
+  // Friendly aliases for the two supplied map files: school = season 1, map = season 2.
+  if(season===1)paths.push('./assets/maps/school.glb');
+  if(season===2)paths.push('./assets/maps/map.glb');
   const model=await loadFirstModel(paths);
   WALLS.length=0;
   if(model){
