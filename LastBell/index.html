@@ -2248,7 +2248,31 @@ function handleNetworkMessage(m) {
   if(m.type==='welcome'&&!isHost){ensureRemote(m.host);roomName=m.roomName||'زنگ آخر';gameMode=m.gameMode||'sandbox';sandboxMode=!!m.sandboxMode;campaignLevel=m.campaignLevel||1;status(`به اتاق «${roomName}» وصل شدی؛ منتظر شروع میزبان باش.`,'ok');return;}
   if(m.type==='start'&&!isHost){campaignLevel=m.level||campaignLevel;gameMode=m.gameMode||gameMode;sandboxMode=!!m.sandboxMode;beginMatch(false);return;}
   if(m.type==='input'&&isHost&&remotePlayer){
-    const wasHidden=!!remotePlayer.hidden;Object.assign(remotePlayer,{x:clamp(m.p.x,-58,58),z:clamp(m.p.z,-48,48),yaw:m.p.yaw||0,pitch:clamp(m.p.pitch||0,-.7,.7),voice:m.p.voice||0,stamina:m.p.stamina||0,moving:!!m.p.moving,sprinting:!!m.p.sprinting,walkPhase:m.p.walkPhase||remotePlayer.walkPhase,hidden:!!m.p.hidden});
+    const wasHidden=!!remotePlayer.hidden;
+    const incomingHidden=!!m.p?.hidden;
+    const oldX=remotePlayer.x,oldZ=remotePlayer.z;
+    const next={x:clamp(Number.isFinite(m.p?.x)?m.p.x:oldX,-58,58),
+                z:clamp(Number.isFinite(m.p?.z)?m.p.z:oldZ,-48,48)};
+    // The host is authoritative: validate the guest's position against the
+    // exact same GLB-derived map collision and actor hit volumes before
+    // accepting network coordinates. Hidden players are inside lockers/desks,
+    // so their hide-state position is intentionally not pushed outside.
+    if(!incomingHidden){
+      resolveCollision(next,.37);
+      resolveActorCollision(next,.37,remotePlayer.id);
+    }
+    const moved=Math.hypot(next.x-oldX,next.z-oldZ);
+    Object.assign(remotePlayer,{
+      x:next.x,z:next.z,
+      yaw:Number.isFinite(m.p?.yaw)?m.p.yaw:remotePlayer.yaw,
+      pitch:clamp(Number.isFinite(m.p?.pitch)?m.p.pitch:0,-.7,.7),
+      voice:clamp(Number.isFinite(m.p?.voice)?m.p.voice:0,0,1),
+      stamina:clamp(Number.isFinite(m.p?.stamina)?m.p.stamina:remotePlayer.stamina,0,100),
+      moving:!incomingHidden&&!!m.p?.moving&&moved>.0005,
+      sprinting:!incomingHidden&&!!m.p?.sprinting,
+      walkPhase:Number.isFinite(m.p?.walkPhase)?m.p.walkPhase:remotePlayer.walkPhase,
+      hidden:incomingHidden
+    });
     if(!wasHidden&&remotePlayer.hidden){for(const bot of enemies){if(bot.alive&&Math.hypot(bot.x-remotePlayer.x,bot.z-remotePlayer.z)<12&&hasLineOfSight(bot,remotePlayer)){bot.alertedHide=true;bot.hideTargetId=remotePlayer.id;}}}
     if(wasHidden&&!remotePlayer.hidden){for(const bot of enemies)if(bot.hideTargetId===remotePlayer.id){bot.alertedHide=false;bot.hideTargetId='';}}
     return;
