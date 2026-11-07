@@ -35,9 +35,9 @@ No build step, package installation or server-side code is needed. `npm test` ru
 This project is published inside the AtbeenLabs portfolio repository at `MAGNETIC-UI/`.
 
 - **Source:** <https://github.com/AtbeenLabs/AtbeenLabs/tree/main/MAGNETIC-UI>
-- **Live site:** <https://atbeenlabs.github.io/MAGNETIC-UI/>
+- **Live site:** <https://atbeenlabs.github.io/AtbeenLabs/>
 
-The parent repository's GitHub Pages deployment must be enabled from its default branch and repository root. Once that deployment is active, the project is served from the live-site path above. GitHub Pages supplies HTTPS automatically.
+A GitHub Actions workflow publishes this folder as the site artifact. The repository's Pages source must be set to **GitHub Actions** under Settings → Pages. The resulting project-site URL is `https://atbeenlabs.github.io/AtbeenLabs/`. GitHub Pages supplies HTTPS automatically.
 
 All asset paths are relative, so the site also works when served from a repository subpath. GitHub Pages supplies HTTPS automatically.
 
