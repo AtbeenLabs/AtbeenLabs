@@ -1,23 +1,67 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <meta http-equiv="refresh" content="0;url=./LastBell/">
-  <title>زنگ آخر</title>
-  <script>location.replace(new URL('./LastBell/', location.href).href);</script>
+  <meta name="theme-color" content="#070b16">
+  <meta name="description" content="AtbeenLabs — مستقل‌سازی و معرفی پروژه‌های نرم‌افزاری آتبین.">
+  <title>AtbeenLabs — Projects</title>
   <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#080d18;color:#eef4ff;font-family:system-ui,sans-serif}
-    main{text-align:center;padding:2rem}
-    a{color:#79c7ff}
+    :root{color-scheme:dark;--bg:#070b16;--panel:#0e1628;--line:#243756;--text:#eef5ff;--muted:#9aacc9;--cyan:#5ce1ff;--violet:#a88bff}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 15% 5%,#102746 0,transparent 36%),radial-gradient(ellipse at 85% 90%,#24183d 0,transparent 32%),var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;padding:28px}
+    main{width:min(100%,1040px);margin:0 auto}
+    header{padding:48px 0 34px}
+    .eyebrow{color:var(--cyan);letter-spacing:.22em;font-size:12px;font-weight:800}
+    h1{font-size:clamp(34px,7vw,68px);line-height:1.02;letter-spacing:-.05em;margin:14px 0}
+    h1 span{background:linear-gradient(100deg,var(--cyan),var(--violet));background-clip:text;color:transparent}
+    .intro{max-width:620px;color:var(--muted);line-height:1.85;font-size:16px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:22px 0 42px}
+    .card{position:relative;overflow:hidden;min-height:255px;padding:26px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,#111e34ee,#0b1222ee);box-shadow:0 18px 70px #0005;display:flex;flex-direction:column}
+    .card:before{content:"";position:absolute;width:190px;height:190px;right:-70px;top:-95px;border-radius:50%;background:var(--glow);filter:blur(48px);opacity:.25}
+    .tag{position:relative;color:var(--glow);font-size:11px;letter-spacing:.16em;font-weight:800}
+    h2{position:relative;font-size:28px;margin:17px 0 10px}
+    .desc{position:relative;color:var(--muted);line-height:1.8;margin:0 0 22px;max-width:440px}
+    .links{position:relative;display:flex;gap:10px;flex-wrap:wrap;margin-top:auto}
+    a{color:inherit;text-decoration:none}
+    .link{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:10px 16px;font-weight:750;font-size:13px;border:1px solid var(--line);background:#17233a}
+    .link.primary{background:var(--glow);border-color:transparent;color:#07101b}
+    footer{border-top:1px solid var(--line);padding:20px 0;color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    @media(max-width:700px){body{padding:18px}.grid{grid-template-columns:1fr}header{padding:34px 0 20px}.card{min-height:225px}}
+    @media(prefers-reduced-motion:no-preference){.card{transition:transform .25s,border-color .25s}.card:hover{transform:translateY(-4px);border-color:#58749c}}
   </style>
 </head>
 <body>
   <main>
-    <h1>🎮 زنگ آخر</h1>
-    <p>در حال ورود به بازی…</p>
-    <p><a href="./LastBell/">اگر بازی باز نشد، اینجا بزن.</a></p>
+    <header>
+      <div class="eyebrow">INDEPENDENT PROJECTS · ATBEENLABS</div>
+      <h1>Ideas into <span>experiences.</span></h1>
+      <p class="intro">پروژه‌های آتبین به مخزن‌های مستقل منتقل شده‌اند. هر پروژه صفحهٔ معرفی، مستندات، سورس و انتشار جداگانهٔ خودش را دارد.</p>
+    </header>
+    <section class="grid" aria-label="Projects">
+      <article class="card" style="--glow:var(--cyan)">
+        <div class="tag">SENSORS · WEB EXPERIMENT</div>
+        <h2>MAGNETIC UI</h2>
+        <p class="desc">A futuristic magnetic-field experiment. Bring a real magnet near a supported device and watch the interface react through sensor readings and spring physics.</p>
+        <div class="links">
+          <a class="link primary" href="https://atbeenlabs.github.io/MAGNETIC-UI/">Launch website ↗</a>
+          <a class="link" href="https://github.com/AtbeenLabs/MAGNETIC-UI">Source ↗</a>
+        </div>
+      </article>
+      <article class="card" style="--glow:var(--violet)">
+        <div class="tag">3D · SURVIVAL · MULTIPLAYER</div>
+        <h2>LASTBELL</h2>
+        <p class="desc">A 3D first-person school survival game with characters, maps, weapons, mobile controls and online rooms.</p>
+        <div class="links">
+          <a class="link primary" href="https://atbeenlabs.github.io/LastBell/">Play game ↗</a>
+          <a class="link" href="https://github.com/AtbeenLabs/LastBell">Source & docs ↗</a>
+        </div>
+      </article>
+    </section>
+    <footer>
+      <span>© AtbeenLabs · Independent open projects</span>
+      <span>Built with curiosity and code.</span>
+    </footer>
   </main>
 </body>
 </html>
