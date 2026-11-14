@@ -1,16 +1,30 @@
-# AtbeenLabs
+# AdabX — آزمایشگاه ادبیات
 
-Independent software projects, experiments and developer builds.
+نسخهٔ آغازین پلتفرم تمرین و سنجش ادبیات فارسی.
 
-## Projects
+## وضعیت فعلی
+- رابط فارسی، راست‌چین و واکنش‌گرا در یک فایل مستقل
+- فهرست ۹ سؤال نخست از دفترچهٔ واقعی مرحلهٔ اول سی‌وششمین المپیاد ادبی (۱۴۰۱)
+- جست‌وجو و فیلتر موضوعی
+- پیوند مستقیم به PDF دفترچهٔ اصلی
+- ثبت فراداده و سیاست اصالت سؤال در فایل sources.json
 
-| Project | Description | Live site | Source |
-|---|---|---|---|
-| **MAGNETIC UI** | Real magnetometer experiment with calibrated, physics-driven interface motion. | [Open](https://atbeenlabs.github.io/MAGNETIC-UI/) | [Repository](https://github.com/AtbeenLabs/MAGNETIC-UI) |
-| **LastBell** | 3D first-person school survival game with characters, maps, weapons, mobile controls and online rooms. | [Play](https://atbeenlabs.github.io/LastBell/) | [Repository](https://github.com/AtbeenLabs/LastBell) |
+## منبع واقعی
+**دفترچه مرحله اول سی‌وششمین المپیاد ادبی، ۱۴۰۱** — ۱۰۰ سؤال، ۱۲۰ دقیقه.
+[مشاهده PDF اصلی](https://www.irysc.com/wp-content/uploads/2024/01/%D9%85%D8%B1%D8%AD%D9%84%D9%87-%D8%A7%D9%88%D9%84-%D8%A7%D9%84%D9%85%D9%BE%DB%8C%D8%A7%D8%AF-%D8%A7%D8%AF%D8%A8%DB%8C-1401.pdf)
 
-Each project has its own repository, documentation, source tree and GitHub Pages deployment.
+موضوع سؤال‌های ۱ تا ۹ با متن PDF تطبیق داده شده‌اند. متن کامل و گزینه‌ها در فایل منبع قابل مشاهده‌اند؛ پاسخ‌نامهٔ تأییدشده هنوز وارد نشده است.
 
-## About
+## اجرا
+فایل index.html را باز کنید؛ پروژه فعلاً به سرور یا API نیاز ندارد.
 
-AtbeenLabs is the home for independent coding projects and experiments.
+## قانون اصالت
+- سؤال رسمی باید منبع، سال، مرحله و شمارهٔ دفترچه داشته باشد.
+- سؤال تألیفی و سؤال الهام‌گرفته از سبک المپیاد برچسب جدا دارند.
+- پاسخ تشریحی بدون کلید یا تحلیل معتبر، قطعی اعلام نمی‌شود.
+
+## نقشهٔ راه
+- افزودن دفترچه‌های سال‌های دیگر با منبع قابل بررسی
+- بانک سؤال‌های فارسی هشتم با ارجاع دقیق به درس و صفحه
+- موتور آزمون، زمان‌سنج، کارنامه و مرور پاسخ‌ها
+- بانک ترکیبی سؤال‌های تألیفی و سؤال‌های رسمیِ قابل ارجاع
